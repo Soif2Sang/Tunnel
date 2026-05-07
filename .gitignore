@@ -1,0 +1,24 @@
+## Xcode generated
+*.xcodeproj/
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+## Swift Package Manager
+.build/
+Packages/
+Package.pins
+Package.resolved
+*.xcodeproj.bak
+
+## macOS
+.DS_Store
+
+## Profiling
+*.profraw
+
+## Editor
+.vscode/
+.idea/
+.swiftpm/
