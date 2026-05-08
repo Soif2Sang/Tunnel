@@ -45,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            button.image = NSImage(systemSymbolName: "point.3.connected.trianglepath.dotted",
+            button.image = NSImage(systemSymbolName: "tram.fill.tunnel",
                                    accessibilityDescription: "Tunnel")
             button.imagePosition = .imageLeading
             button.target = self
@@ -78,7 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem?.button else { return }
         button.title = summary.runningCount > 0 ? " \(summary.runningCount)" : ""
 
-        let symbolName = "point.3.connected.trianglepath.dotted"
+        let symbolName = "tram.fill.tunnel"
 
         switch summary.tone {
         case .grey:

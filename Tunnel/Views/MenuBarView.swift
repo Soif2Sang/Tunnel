@@ -76,7 +76,7 @@ private struct ScreenHeader<Leading: View, Trailing: View>: View {
 /// Standard leading content: an app icon (no action). Use on root screens.
 private struct HomeIcon: View {
     var body: some View {
-        Image(systemName: "point.3.connected.trianglepath.dotted")
+        Image(systemName: "tram.fill.tunnel")
             .foregroundStyle(.secondary)
     }
 }
@@ -173,7 +173,7 @@ private struct ListScreen: View {
                         colors: [Color.accentColor.opacity(0.85), Color.accentColor.opacity(0.55)],
                         startPoint: .topLeading, endPoint: .bottomTrailing))
                     .frame(width: 24, height: 24)
-                Image(systemName: "point.3.connected.trianglepath.dotted")
+                Image(systemName: "tram.fill.tunnel")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
             }
@@ -367,7 +367,7 @@ private struct EmptyStateView: View {
                         colors: [Color.accentColor.opacity(0.18), Color.accentColor.opacity(0.05)],
                         startPoint: .top, endPoint: .bottom))
                     .frame(width: 56, height: 56)
-                Image(systemName: "point.3.connected.trianglepath.dotted")
+                Image(systemName: "tram.fill.tunnel")
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
             }
@@ -1421,7 +1421,7 @@ private struct SettingsScreen: View {
 
     private var aboutCard: some View {
         SettingsCard(
-            icon: "point.3.connected.trianglepath.dotted",
+            icon: "tram.fill.tunnel",
             iconTint: .accentColor,
             title: "About",
             subtitle: nil
