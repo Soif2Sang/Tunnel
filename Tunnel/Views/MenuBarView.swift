@@ -177,7 +177,7 @@ private struct ListScreen: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
             }
-            Text("Berth")
+            Text("Tunnel")
                 .font(.system(size: 15, weight: .semibold, design: .default))
                 .tracking(-0.2)
 
@@ -1378,7 +1378,7 @@ private struct SettingsScreen: View {
             icon: "terminal",
             iconTint: .purple,
             title: "Binaries",
-            subtitle: "Where Berth finds kubectl and its plugins"
+            subtitle: "Where Tunnel finds kubectl and its plugins"
         ) {
             VStack(spacing: 8) {
                 fieldRow(label: "kubectl", text: $kubectlPath, placeholder: "/usr/local/bin/kubectl") {
@@ -1427,7 +1427,7 @@ private struct SettingsScreen: View {
             subtitle: nil
         ) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Berth 0.1.0").font(.system(size: 12, weight: .semibold))
+                Text("Tunnel 0.1.0").font(.system(size: 12, weight: .semibold))
                 Text("kubectl port-forward manager")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }

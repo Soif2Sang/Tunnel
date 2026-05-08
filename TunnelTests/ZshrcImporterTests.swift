@@ -1,5 +1,5 @@
 import XCTest
-@testable import Berth
+@testable import Tunnel
 
 final class ZshrcImporterTests: XCTestCase {
     func test_parsesDoubleQuotedAlias() {

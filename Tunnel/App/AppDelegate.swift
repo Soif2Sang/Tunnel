@@ -6,11 +6,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let appState = AppState()
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
+    private var globalClickMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         setupStatusItem()
+        installGlobalClickMonitor()
         Task { await appState.bootstrap() }
+    }
+
+    /// Close our popover whenever the user mouses-down anywhere outside our app.
+    /// Required because NSPopover.behavior = .transient does NOT reliably dismiss
+    /// when the user clicks another menu-bar status item.
+    private func installGlobalClickMonitor() {
+        guard globalClickMonitor == nil else { return }
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let popover = self.popover, popover.isShown else { return }
+                popover.performClose(nil)
+            }
+        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -31,7 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
             button.image = NSImage(systemSymbolName: "point.3.connected.trianglepath.dotted",
-                                   accessibilityDescription: "Berth")
+                                   accessibilityDescription: "Tunnel")
             button.imagePosition = .imageLeading
             button.target = self
             button.action = #selector(togglePopover(_:))
@@ -68,7 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch summary.tone {
         case .grey:
             // Idle: template rendering, system tints it to match dark/light menu bar.
-            let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Berth")
+            let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Tunnel")
             image?.isTemplate = true
             button.image = image
             button.contentTintColor = nil
@@ -84,7 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }()
             let config = NSImage.SymbolConfiguration(paletteColors: [color])
-            let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Berth")?
+            let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Tunnel")?
                 .withSymbolConfiguration(config)
             image?.isTemplate = false
             button.image = image
@@ -98,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.performClose(sender)
         } else {
             // Take focus away from whatever app is below us, so its mouse-tracking
-            // (hover effects, etc) stops firing while the user interacts with Berth.
+            // (hover effects, etc) stops firing while the user interacts with Tunnel.
             NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()

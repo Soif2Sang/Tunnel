@@ -15,7 +15,7 @@ actor ConfigStore {
             let dir = FileManager.default
                 .urls(for: .applicationSupportDirectory, in: .userDomainMask)
                 .first!
-                .appendingPathComponent("Berth", isDirectory: true)
+                .appendingPathComponent("Tunnel", isDirectory: true)
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             self.url = dir.appendingPathComponent("forwards.json")
         }
