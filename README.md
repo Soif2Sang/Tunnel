@@ -34,22 +34,22 @@ auto-restart on disconnects, and see live status at a glance.
 ```sh
 brew install xcodegen          # if you don't have it
 xcodegen generate
-open Berth.xcodeproj
+open Tunnel.xcodeproj
 ```
 
-In Xcode: select the `Berth` scheme and ⌘R. The app has `LSUIElement: true`,
+In Xcode: select the `Tunnel` scheme and ⌘R. The app has `LSUIElement: true`,
 so it lives in the menu bar and doesn't show a Dock icon.
 
 To build from CLI:
 
 ```sh
-xcodebuild -project Berth.xcodeproj -scheme Berth -configuration Debug build
+xcodebuild -project Tunnel.xcodeproj -scheme Tunnel -configuration Debug build
 ```
 
 To run the unit tests:
 
 ```sh
-xcodebuild -project Berth.xcodeproj -scheme Berth -destination 'platform=macOS' test
+xcodebuild -project Tunnel.xcodeproj -scheme Tunnel -destination 'platform=macOS' test
 ```
 
 ## How it works
@@ -85,22 +85,22 @@ running; `lost connection` / non-zero exit → reconnect).
 ## Project layout
 
 ```
-Berth/
+Tunnel/
   project.yml                      XcodeGen spec
   SPEC.md                          Design document
-  Berth/
+  Tunnel/
     App/                           Entry point + AppDelegate (status item)
     Models/                        Plain data types
     Services/                      Side-effecting actors / classes
     State/                         AppState (@Observable) + ConfigStore
     Views/                         SwiftUI screens
     Resources/                     Info.plist, Assets.xcassets
-  BerthTests/                      Unit tests
+  TunnelTests/                      Unit tests
 ```
 
 ## Configuration
 
-Saved forwards live at `~/Library/Application Support/Berth/forwards.json`
+Saved forwards live at `~/Library/Application Support/Tunnel/forwards.json`
 (JSON, version-stamped, atomic writes).
 
 The app does **not** modify your `~/.kube/config`; it only reads it through
