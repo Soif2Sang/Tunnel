@@ -1,4 +1,4 @@
-# Berth
+# Tunnel
 
 Native macOS menu bar app to manage `kubectl port-forward` sessions across multiple
 Kubernetes clusters. Replaces a wall of `pf-*` shell aliases with a real UI:
