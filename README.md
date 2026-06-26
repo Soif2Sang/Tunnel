@@ -147,3 +147,5 @@ or build settings change, regenerate:
 ```bash
 xcodegen generate
 ```
+
+Have fun
