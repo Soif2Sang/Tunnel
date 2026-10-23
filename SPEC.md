@@ -13,7 +13,7 @@ Native macOS app that replaces ad-hoc `kubectl port-forward` shell aliases with 
 3. Show live status (idle, connecting, running, reconnecting, failed) for each saved forward.
 4. Auto-restart forwards when kubectl exits unexpectedly, with bounded exponential backoff.
 5. Auto-start designated forwards at app launch (per-forward opt-in).
-6. One-time import of existing `pf-*` aliases from `~/.zshrc`.
+6. Manual reload of `forwards.json` from disk (no automatic file watching).
 7. Menu bar quick-access + main window for management.
 
 ### Non-goals (v1)
@@ -59,7 +59,7 @@ User's environment:
 2. **Find a new service to forward** — Open main window → type `adsleuth` → see all matching services across clusters → pick one → set local port `3001` → save and start.
 3. **See why a forward is broken** — Status icon turns red → click the forward → see stderr panel: "error: lease lost".
 4. **Switch all forwards on/off in bulk** — Menu bar has "Stop all" / "Start auto-start group".
-5. **First launch onboarding** — App imports existing `pf-*` aliases, shows them in main window, asks which to mark auto-start.
+5. **Hand-edit the config** — User edits `forwards.json` in an editor → clicks the reload button next to "Add forward" → the list reflects the file; edited running forwards restart with the new settings.
 6. **OIDC re-auth** — A forward needs auth refresh → app shows "authenticating…" state, lets `oidc-login` open the browser, recovers when auth completes.
 
 ---
@@ -120,16 +120,15 @@ User's environment:
 | | `PortForwardManager.swift` | Owns `[UUID: PortForwardSession]`. Each session wraps a `Process`. State transitions, backoff scheduling. |
 | | `PortForwardSession.swift` | One running forward. Reads stderr line-by-line (`Forwarding from 127.0.0.1:3100 -> 3000` → running, `lost connection` / non-zero exit → reconnecting). |
 | | `LocalPortChecker.swift` | `lsof -nP -iTCP:<port> -sTCP:LISTEN` to detect conflicts before starting. |
-| | `ZshrcImporter.swift` | Parses `~/.zshrc` for `alias pf-...="kubectl port-forward services/X Y:Z -n N"`. Returns draft `PortForward` records. |
 | **State** | `AppState.swift` | `@Observable`. Holds `[PortForward]`, `[UUID: SessionState]`, `ServiceCatalog`, `[KubeContext]`. Mediates between views and services. |
-| | `ConfigStore.swift` | Persists `[PortForward]` to `~/Library/Application Support/Berth/forwards.json`. Atomic writes, schema version. |
+| | `ConfigStore.swift` | Persists `[PortForward]` to `~/Library/Application Support/Tunnel/forwards.json`. Atomic writes, schema version, validation on load. |
 | **Views** | `MenuBarView.swift` | NSStatusItem with custom SwiftUI menu. Counter badge of running forwards on the icon. |
 | | `MainWindowView.swift` | Tabs: Search, Forwards, Settings. |
 | | `SearchView.swift` | TextField + grouped results (`cluster › namespace`). On select, opens `AddForwardSheet`. |
 | | `AddForwardSheet.swift` | Form: name, local port (validated), remote port (default = service's first port), auto-start toggle. |
 | | `ForwardsListView.swift` | Table of saved forwards: name, target, status badge, play/stop, edit, delete. |
 | | `ForwardDetailView.swift` | Shows live state, recent stderr (last 200 lines), uptime, "force restart" button. |
-| | `SettingsView.swift` | Refresh-context-list, re-import zshrc, choose kubectl path. |
+| | `SettingsView.swift` | Refresh-context-list, choose kubectl path. |
 | **App** | `BerthApp.swift` | `@main`, owns `AppState`, sets up `MenuBarExtra` + window. |
 
 ### Concurrency
@@ -278,23 +277,33 @@ Table of all saved forwards with: name, target, local port, status pill, actions
 ### Main window — Settings
 
 - "Refresh context list" button (re-runs `kubectl config get-contexts`).
-- "Re-import from .zshrc" button.
 - "Default kubectl path" (auto-detected, editable).
 - "Default extra PATH" (auto-detected to `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`, editable).
 
 ---
 
-## 8. zshrc importer — parsing rules
+## 8. Config reload
 
-Match per line:
+`forwards.json` is read once at launch. There is no file watcher; the list screen has a reload button next to "Add forward" that calls `AppState.reloadFromDisk()`.
 
-```
-^alias\s+(pf-[\w-]+)\s*=\s*['"]?kubectl\s+port-forward\s+services/(\S+)\s+(\d+):(\d+)\s+-n\s+(\S+)['"]?
-```
+Validation (`ConfigStore.validate`, applied on every load) rejects the whole file if:
 
-Capture groups: `displayName-stem`, `serviceName`, `localPort`, `remotePort`, `namespace`. Context is inferred as the currently active context at import time, with a UI confirmation step letting the user reassign per-row.
+- two forwards share the same `id`;
+- `context`, `namespace` or `serviceName` is empty;
+- `localPort` is outside 1024–65535, or `remotePort` outside 1–65535.
 
-Lines that don't match (e.g. the `adsleuth` `$(get pods | grep | awk)` form) are surfaced as "couldn't auto-import — found X, please configure manually" with the raw alias body shown.
+On a decode or validation error the in-memory list is left untouched and the error is shown as a banner in the list screen.
+
+On success, the new list is diffed against the current one by `id`:
+
+| Change | Action |
+|---|---|
+| Forward removed from file | Session stopped, state and logs discarded. |
+| Forward added to file | Shown as idle. `autoStart` is only honored at app launch. |
+| Forward edited, currently running / connecting / reconnecting | Restarted with the new settings (`PortForwardManager.start` replaces the session). |
+| Forward edited, idle or failed | New settings applied, not started. |
+
+The app overwrites `forwards.json` on any UI change, so hand edits that were not reloaded first are lost.
 
 ---
 
@@ -305,7 +314,7 @@ Lines that don't match (e.g. the `adsleuth` `$(get pods | grep | awk)` form) are
 | 1 | OIDC token expired → kubectl spawns `oidc-login` which opens browser | Treat first 10s of stderr silence in `connecting` as "auth pending"; surface a yellow "Authenticating…" state. Don't time out until 60s. |
 | 2 | User has two clusters with services of the same name | Search results group by `cluster › namespace`, fully qualifying every entry. |
 | 3 | Two saved forwards bind the same local port | Pre-flight `lsof` blocks the second one starting; show clear error. Optional: auto-pick next free port (off by default). |
-| 4 | User edits `~/.kube/config` after launch (new context) | Settings panel "Refresh context list" button. Auto-watch is out-of-scope for v1. |
+| 4 | User edits `~/.kube/config` after launch (new context) | Settings panel "Refresh context list" button. Auto-watch is out-of-scope for v1. Same for `forwards.json`: reload button in the list screen. |
 | 5 | Service has multiple ports | `AddForwardSheet` shows port picker with names ("http", "grpc", etc.). Default = first port. |
 | 6 | Service exists in catalog but is later deleted | When session fails to start, surface `serviceNotFound`. Catalog refresh on next open will drop it from suggestions. The saved forward remains (user can edit/delete manually). |
 | 7 | Network completely down | Backoff hits cap and stays there indefinitely; eventually `failed`. User-initiated retry resets attempt count. |
@@ -323,7 +332,7 @@ Lines that don't match (e.g. the `adsleuth` `$(get pods | grep | awk)` form) are
 ## 10. Security & permissions
 
 - No code signing in v1 → run from Xcode or `xattr -dr com.apple.quarantine`.
-- App Sandbox: **disabled** (we need to spawn `kubectl` and read `~/.kube/config` & `~/.zshrc`).
+- App Sandbox: **disabled** (we need to spawn `kubectl` and read `~/.kube/config`).
 - Hardened Runtime: not required.
 - No keychain access; OIDC tokens stay in `~/.kube/cache/oidc-login/` managed by kubelogin.
 - No network calls from the app itself; everything tunnels through kubectl.
@@ -384,7 +393,6 @@ Mirroring the most recent personal-app convention (Axon):
         PortForwardManager.swift
         PortForwardSession.swift
         LocalPortChecker.swift
-        ZshrcImporter.swift
       State/
         AppState.swift
         ConfigStore.swift
@@ -402,7 +410,7 @@ Mirroring the most recent personal-app convention (Axon):
     BerthTests/
       KubectlClientTests.swift
       ServiceCatalogTests.swift
-      ZshrcImporterTests.swift
+      ConfigStoreTests.swift
       PortForwardSessionTests.swift
   ```
 
@@ -421,7 +429,7 @@ Rough order of work, smallest viable slice first:
 7. `MenuBarView` — full status icon + menu list.
 8. `LocalPortChecker`, error states, `ForwardDetailView` (logs).
 9. Auto-restart with backoff.
-10. `ZshrcImporter` + first-run experience.
+10. Config validation + manual reload from disk.
 11. Auto-start at launch, Login Item registration.
 12. Settings tab, polish, README.
 

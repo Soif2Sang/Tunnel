@@ -27,7 +27,31 @@ actor ConfigStore {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let file = try decoder.decode(File.self, from: data)
+        try Self.validate(file.forwards)
         return file.forwards
+    }
+
+    struct ValidationError: Error, CustomStringConvertible {
+        let description: String
+    }
+
+    static func validate(_ forwards: [PortForward]) throws {
+        var seen = Set<UUID>()
+        for f in forwards {
+            let label = f.displayName.isEmpty ? f.id.uuidString : f.displayName
+            guard seen.insert(f.id).inserted else {
+                throw ValidationError(description: "Duplicate id \(f.id.uuidString)")
+            }
+            guard !f.context.isEmpty, !f.namespace.isEmpty, !f.serviceName.isEmpty else {
+                throw ValidationError(description: "\(label): context, namespace and serviceName are required")
+            }
+            guard (1024...65535).contains(f.localPort) else {
+                throw ValidationError(description: "\(label): local port must be 1024–65535")
+            }
+            guard (1...65535).contains(f.remotePort) else {
+                throw ValidationError(description: "\(label): remote port must be 1–65535")
+            }
+        }
     }
 
     func save(_ forwards: [PortForward]) throws {

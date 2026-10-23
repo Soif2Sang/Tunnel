@@ -14,7 +14,6 @@ struct MenuBarView: View {
         case addManual
         case editForward(UUID)
         case settings
-        case importing
     }
 
     var body: some View {
@@ -26,21 +25,11 @@ struct MenuBarView: View {
             case .addManual:   AddManualScreen(screen: $screen)
             case .editForward(let id): EditForwardScreen(forwardID: id, screen: $screen)
             case .settings:    SettingsScreen(screen: $screen)
-            case .importing:   ImportScreen(screen: $screen)
             }
         }
         .frame(width: 400)
         .fixedSize(horizontal: false, vertical: true)
         .background(.regularMaterial)
-        .task {
-            // First-run import prompt
-            if app.hasBootstrapped, app.forwards.isEmpty, !app.hasImportedZshrc {
-                let imports = app.loadZshrcImports()
-                if imports.contains(where: { $0.parsed != nil }) {
-                    screen = .importing
-                }
-            }
-        }
     }
 }
 
@@ -159,6 +148,9 @@ private struct ListScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if let err = app.configLoadError {
+                configErrorBanner(err)
+            }
             content
             footer
         }
@@ -192,6 +184,22 @@ private struct ListScreen: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(headerDivider, alignment: .bottom)
+    }
+
+    private func configErrorBanner(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.orange.opacity(0.08))
     }
 
     private var headerDivider: some View {
@@ -282,6 +290,17 @@ private struct ListScreen: View {
                 .shadow(color: Color.accentColor.opacity(0.25), radius: 4, y: 1)
             }
             .buttonStyle(.plain)
+
+            Group {
+                if app.isReloadingConfig {
+                    ProgressView().controlSize(.small).frame(width: 30, height: 30)
+                } else {
+                    HeaderIconButton(systemImage: "arrow.clockwise", help: "Reload forwards.json") {
+                        Task { await app.reloadFromDisk() }
+                    }
+                }
+            }
+            .padding(.leading, 8)
 
             Spacer()
 
@@ -1325,7 +1344,6 @@ private struct SettingsScreen: View {
                 VStack(alignment: .leading, spacing: 14) {
                     clustersCard
                     binariesCard
-                    importCard
                     aboutCard
                 }
                 .padding(12)
@@ -1395,26 +1413,6 @@ private struct SettingsScreen: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.top, 2)
-            }
-        }
-    }
-
-    private var importCard: some View {
-        SettingsCard(
-            icon: "tray.and.arrow.down",
-            iconTint: .green,
-            title: "Import",
-            subtitle: "Re-scan ~/.zshrc for `pf-*` aliases"
-        ) {
-            HStack {
-                PillButton(title: "Re-import from .zshrc", systemImage: "arrow.down.doc") {
-                    Task {
-                        let imports = app.loadZshrcImports()
-                        await app.importAliases(imports)
-                    }
-                }
-                Spacer()
-                Text("Duplicates skipped").font(.system(size: 10)).foregroundStyle(.tertiary)
             }
         }
     }
@@ -1589,95 +1587,6 @@ private struct PillButton: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-    }
-}
-
-// MARK: - First-run import screen
-
-private struct ImportScreen: View {
-    @Environment(AppState.self) private var app
-    @Binding var screen: MenuBarView.Screen
-    @State private var imports: [ImportedAlias] = []
-    @State private var selected: Set<UUID> = []
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ScreenHeader(title: "Import from .zshrc") {
-                BackButton { screen = .list }
-            } trailing: {
-                EmptyView()
-            }
-            Divider()
-
-            if imports.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 28)).foregroundStyle(.tertiary)
-                    Text("No `pf-*` aliases found in ~/.zshrc.").foregroundStyle(.secondary).font(.caption)
-                }
-                .padding(.vertical, 24).frame(maxWidth: .infinity)
-            } else {
-                Text("Found \(imports.count) candidate\(imports.count == 1 ? "" : "s") in ~/.zshrc.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .padding(.horizontal, 14).padding(.top, 10)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(imports) { item in
-                            HStack(alignment: .top, spacing: 8) {
-                                Toggle("", isOn: Binding(
-                                    get: { selected.contains(item.id) },
-                                    set: { v in
-                                        if v { selected.insert(item.id) } else { selected.remove(item.id) }
-                                    }
-                                ))
-                                .labelsHidden().toggleStyle(.checkbox)
-                                .disabled(item.parsed == nil)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(item.aliasName).font(.callout.weight(.medium))
-                                    if let pf = item.parsed {
-                                        Text("\(pf.namespace) / \(pf.serviceName) — :\(pf.localPort) → \(pf.remotePort)")
-                                            .font(.caption).foregroundStyle(.secondary)
-                                    } else if let note = item.note {
-                                        Text(note).font(.caption).foregroundStyle(.red)
-                                    }
-                                }
-                                Spacer(minLength: 4)
-                            }
-                            .padding(.horizontal, 14).padding(.vertical, 4)
-                            Divider().opacity(0.3)
-                        }
-                    }
-                }
-                .frame(maxHeight: 320)
-            }
-
-            Divider()
-            HStack {
-                Button("Skip") {
-                    Task {
-                        await app.importAliases([])
-                        screen = .list
-                    }
-                }
-                Spacer()
-                Button("Import selected") {
-                    let chosen = imports.filter { selected.contains($0.id) }
-                    Task {
-                        await app.importAliases(chosen)
-                        screen = .list
-                    }
-                }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-                .disabled(selected.isEmpty)
-            }
-            .controlSize(.small)
-            .padding(.horizontal, 12).padding(.vertical, 8)
-        }
-        .onAppear {
-            imports = app.loadZshrcImports()
-            selected = Set(imports.filter { $0.parsed != nil }.map(\.id))
-        }
     }
 }
 

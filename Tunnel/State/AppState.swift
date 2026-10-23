@@ -14,8 +14,10 @@ final class AppState {
     var states: [UUID: SessionState] = [:]
     var contextRefreshErrors: [String: String] = [:]
     var lastError: String?
+    /// Error from the last attempt to read forwards.json (shown in the list screen).
+    var configLoadError: String?
+    var isReloadingConfig: Bool = false
     var hasBootstrapped: Bool = false
-    var hasImportedZshrc: Bool = false
 
     // MARK: - search
     var searchQuery: String = ""
@@ -58,7 +60,7 @@ final class AppState {
         do {
             self.forwards = try await store.load()
         } catch {
-            lastError = "Failed to load forwards: \(error)"
+            configLoadError = "Failed to load forwards.json: \(error)"
         }
         // Initial state for every saved forward = idle.
         for f in forwards where states[f.id] == nil {
@@ -126,8 +128,8 @@ final class AppState {
     }
 
     func delete(id: UUID) async {
-        await manager.stop(id: id)
         forwards.removeAll { $0.id == id }
+        await manager.stop(id: id)
         states.removeValue(forKey: id)
         liveLogs.removeValue(forKey: id)
         await persist()
@@ -139,6 +141,49 @@ final class AppState {
             forwards[idx].autoStart = value
             await persist()
         }
+    }
+
+    /// Re-reads forwards.json. Removed forwards are stopped; edited forwards
+    /// that were running or connecting are restarted with their new settings.
+    /// On a read or validation error the current list is kept untouched.
+    func reloadFromDisk() async {
+        guard !isReloadingConfig else { return }
+        isReloadingConfig = true
+        defer { isReloadingConfig = false }
+
+        let loaded: [PortForward]
+        do {
+            loaded = try await store.load()
+        } catch {
+            configLoadError = "Failed to load forwards.json: \(error)"
+            return
+        }
+        configLoadError = nil
+
+        let old = Dictionary(uniqueKeysWithValues: forwards.map { ($0.id, $0) })
+        let newIDs = Set(loaded.map(\.id))
+
+        forwards = loaded
+        for id in old.keys where !newIDs.contains(id) {
+            await manager.stop(id: id)
+            states.removeValue(forKey: id)
+            liveLogs.removeValue(forKey: id)
+        }
+        for f in loaded {
+            guard let prev = old[f.id] else {
+                states[f.id] = .idle
+                continue
+            }
+            guard prev != f else { continue }
+            switch states[f.id] {
+            case .running, .connecting, .reconnecting:
+                // start() replaces the existing session itself.
+                await manager.start(forward: f)
+            default:
+                break
+            }
+        }
+        publishSummary()
     }
 
     private func persist() async {
@@ -197,36 +242,16 @@ final class AppState {
         await manager.stopAll()
     }
 
-    // MARK: - imports
-
-    /// Returns the imported aliases (some may have parse errors). Caller decides what to add.
-    func loadZshrcImports() -> [ImportedAlias] {
-        let defaultCtx = contexts.first(where: \.isCurrent)?.name ?? contexts.first?.name ?? ""
-        return ZshrcImporter.importFromZshrc(defaultContext: defaultCtx)
-    }
-
-    func importAliases(_ aliases: [ImportedAlias]) async {
-        for alias in aliases {
-            guard let pf = alias.parsed else { continue }
-            // Skip if a forward with same target already exists.
-            let exists = forwards.contains { other in
-                other.context == pf.context && other.namespace == pf.namespace &&
-                other.serviceName == pf.serviceName && other.localPort == pf.localPort
-            }
-            if !exists {
-                await add(pf)
-            }
-        }
-        hasImportedZshrc = true
-    }
-
     // MARK: - manager callbacks
 
     private func wireManagerCallbacks() async {
         await manager.setStateChangeHandler { [weak self] id, state in
             Task { @MainActor in
-                self?.states[id] = state
-                self?.publishSummary()
+                guard let self else { return }
+                // Late events for deleted forwards must not resurrect their state.
+                guard self.forwards.contains(where: { $0.id == id }) else { return }
+                self.states[id] = state
+                self.publishSummary()
             }
         }
         await manager.setLogLineHandler { [weak self] id, line in
@@ -237,6 +262,7 @@ final class AppState {
     }
 
     private func appendLog(id: UUID, line: String) {
+        guard forwards.contains(where: { $0.id == id }) else { return }
         var lines = liveLogs[id] ?? []
         lines.append(line)
         if lines.count > logCapacity {

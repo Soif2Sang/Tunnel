@@ -21,7 +21,6 @@ terminal full of long-running `kubectl port-forward` commands.
 - Search services across Kubernetes contexts instead of hand-building commands.
 - Detect local port conflicts before starting a session.
 - Auto-restart interrupted forwards with backoff.
-- Optionally import compatible port-forward aliases from `~/.zshrc`.
 
 ## What Tunnel Does
 
@@ -83,9 +82,7 @@ xcodebuild -project Tunnel.xcodeproj -scheme Tunnel -destination 'platform=macOS
    local-to-remote port pair.
 3. Start or stop forwards from the popover.
 4. Enable auto-start for forwards that should come back when the app launches.
-5. Optionally use the `~/.zshrc` importer for compatible existing aliases.
-
-Imported shell entries are read-only. Tunnel does not rewrite your shell config.
+5. After editing `forwards.json` by hand, click ↻ to reload it.
 
 ## How It Works
 
@@ -112,7 +109,7 @@ behavior.
 
 - `Tunnel/App/` app entry point and status item setup
 - `Tunnel/Models/` Kubernetes and port-forward data types
-- `Tunnel/Services/` kubectl integration, service catalog, importer, and session
+- `Tunnel/Services/` kubectl integration, service catalog, and session
   management
 - `Tunnel/State/` app state and persistent config store
 - `Tunnel/Views/` SwiftUI menu bar UI
@@ -130,6 +127,20 @@ Saved forwards live at:
 ```
 
 The file is JSON, version-stamped, and written atomically.
+
+It is read once at launch; there is no file watcher. After editing it by hand,
+click the reload button (↻) next to **Add forward**:
+
+- forwards removed from the file are stopped;
+- new forwards appear idle (`autoStart` only applies at launch);
+- edited forwards that were running are restarted with the new settings.
+
+The file is validated on load (unique ids, required fields, local port
+1024–65535, remote port 1–65535). If it is invalid, the current list is kept and
+the error is shown in the menu.
+
+Tunnel rewrites the whole file on every change made in the UI, so reload before
+making UI changes or your hand edits will be overwritten.
 
 ## Known Limitations
 
