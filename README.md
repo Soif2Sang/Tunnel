@@ -4,7 +4,9 @@ Tunnel is a native macOS menu bar app for managing SSH local forwards and
 `kubectl port-forward` sessions across Kubernetes contexts. It replaces repeated
 manual commands with a searchable interface, saved tunnels, and one-click controls.
 
-![Tunnel menu bar screenshot](Docs/tunnel-screenshot.png)
+<p align="center">
+  <img src="Docs/tunnel-v0.2.0-overview.png" alt="Tunnel 0.2.0 menu bar popover with Kubernetes and SSH tunnels" width="472">
+</p>
 
 The screenshots use fictional tunnels and simulated connection states.
 
@@ -93,7 +95,9 @@ Click a tunnel marked **Port occupé** to see which process owns the port, if
 Tunnel can identify it. **Libérer et réessayer** stops that process before
 retrying, so use it only if you recognize the process and no longer need it.
 
-![Expanded Tunnel row showing a local port conflict](Docs/tunnel-port-conflict.png)
+<p align="center">
+  <img src="Docs/tunnel-v0.2.0-port-conflict.png" alt="Expanded Tunnel row showing a local port conflict" width="472">
+</p>
 
 ### SSH example: a service on your VPS
 
