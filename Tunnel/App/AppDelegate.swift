@@ -5,6 +5,7 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let appState = AppState()
     private var statusItem: NSStatusItem?
+    private var statusBadge: StatusBadgeView?
     private var popover: NSPopover?
     private var globalClickMonitor: Any?
 
@@ -43,13 +44,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // The popover is anchored to this button. Neither its width nor its
+        // content layout should change as tunnels start and stop.
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
-            button.image = NSImage(systemSymbolName: "tram.fill.tunnel",
-                                   accessibilityDescription: "Tunnel")
-            button.imagePosition = .imageLeading
+            button.imagePosition = .imageOnly
+            button.image = makeStatusIcon()
             button.target = self
             button.action = #selector(togglePopover(_:))
+
+            // Keep the glyph a template image so AppKit can adapt it independently of the badge.
+            let badge = StatusBadgeView()
+            badge.translatesAutoresizingMaskIntoConstraints = false
+            button.addSubview(badge)
+            NSLayoutConstraint.activate([
+                badge.topAnchor.constraint(equalTo: button.topAnchor, constant: 2),
+                badge.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -1),
+                badge.widthAnchor.constraint(equalToConstant: 7),
+                badge.heightAnchor.constraint(equalTo: badge.widthAnchor),
+            ])
+            statusBadge = badge
         }
 
         let popover = NSPopover()
@@ -66,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         self.statusItem = item
         self.popover = popover
+        applySummary(appState.currentSummary())
 
         Task { @MainActor in
             for await summary in appState.summaryUpdates {
@@ -76,35 +91,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func applySummary(_ summary: AppState.StatusSummary) {
         guard let button = statusItem?.button else { return }
-        button.title = summary.runningCount > 0 ? " \(summary.runningCount)" : ""
-
-        let symbolName = "tram.fill.tunnel"
-
-        switch summary.tone {
-        case .grey:
-            // Idle: template rendering, system tints it to match dark/light menu bar.
-            let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Tunnel")
-            image?.isTemplate = true
-            button.image = image
-            button.contentTintColor = nil
-        case .green, .yellow, .red:
-            // Active states: render the symbol with palette config so EVERY layer
-            // (dots + connecting lines) takes the chosen color, not just the primary layer.
-            let color: NSColor = {
-                switch summary.tone {
-                case .green: return .systemGreen
-                case .yellow: return .systemOrange
-                case .red: return .systemRed
-                default: return .controlAccentColor
-                }
-            }()
-            let config = NSImage.SymbolConfiguration(paletteColors: [color])
-            let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Tunnel")?
-                .withSymbolConfiguration(config)
-            image?.isTemplate = false
-            button.image = image
-            button.contentTintColor = nil
+        let description = "Tunnel — Actifs : \(summary.runningCount), en cours : \(summary.connectingCount), échecs : \(summary.failedCount)"
+        button.toolTip = description
+        button.setAccessibilityLabel(description)
+        let tint: NSColor?
+        switch summary.status {
+        case .idle: tint = nil
+        case .running: tint = .systemGreen
+        case .connecting: tint = .systemOrange
+        case .failed: tint = .systemRed
         }
+        statusBadge?.tint = tint
+    }
+
+    private func makeStatusIcon() -> NSImage {
+        let image = NSImage(size: NSSize(width: 18, height: 14), flipped: true) { rect in
+            let glyph = TunnelGlyph().path(in: rect.insetBy(dx: 1, dy: 1))
+            let stroke = glyph.strokedPath(StrokeStyle(lineWidth: 1.45, lineCap: .round, lineJoin: .round))
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            context.setFillColor(NSColor.black.cgColor)
+            context.addPath(stroke.cgPath)
+            context.fillPath()
+            return true
+        }
+        image.isTemplate = true
+        return image
     }
 
     @objc private func togglePopover(_ sender: NSStatusBarButton) {
@@ -119,4 +130,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.contentViewController?.view.window?.makeKey()
         }
     }
+}
+
+private final class StatusBadgeView: NSView {
+    var tint: NSColor? {
+        didSet { needsDisplay = true }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let tint else { return }
+        tint.setFill()
+        NSBezierPath(ovalIn: bounds).fill()
+    }
+
+    // Clicking the badge should still open the popover through the status button.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

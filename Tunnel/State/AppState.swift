@@ -34,8 +34,13 @@ final class AppState {
 
     // MARK: - menu bar broadcast
 
-    enum StatusTone { case green, yellow, red, grey }
-    struct StatusSummary: Sendable { let tone: StatusTone; let runningCount: Int; let failedCount: Int }
+    enum MenuBarStatus { case idle, running, connecting, failed }
+    struct StatusSummary: Sendable {
+        let status: MenuBarStatus
+        let runningCount: Int
+        let connectingCount: Int
+        let failedCount: Int
+    }
     var summaryUpdates: AsyncStream<StatusSummary>
     private let summaryContinuation: AsyncStream<StatusSummary>.Continuation
 
@@ -285,12 +290,12 @@ final class AppState {
             case .idle: break
             }
         }
-        let tone: StatusTone
-        if failed > 0 { tone = .red }
-        else if connecting > 0 { tone = .yellow }
-        else if running > 0 { tone = .green }
-        else { tone = .grey }
-        return StatusSummary(tone: tone, runningCount: running, failedCount: failed)
+        let status: MenuBarStatus
+        if failed > 0 { status = .failed }
+        else if connecting > 0 { status = .connecting }
+        else if running > 0 { status = .running }
+        else { status = .idle }
+        return StatusSummary(status: status, runningCount: running, connectingCount: connecting, failedCount: failed)
     }
 
     private func publishSummary() {

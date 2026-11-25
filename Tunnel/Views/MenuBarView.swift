@@ -9,6 +9,8 @@ struct MenuBarView: View {
 
     enum Screen: Equatable {
         case list
+        case addType
+        case addSSH
         case addSearch
         case addConfigure(KubeService)
         case addManual
@@ -20,16 +22,44 @@ struct MenuBarView: View {
         VStack(spacing: 0) {
             switch screen {
             case .list:        ListScreen(screen: $screen, expandedID: $expandedID)
+            case .addType:     AddTypeScreen(screen: $screen)
+            case .addSSH:      SSHForwardScreen(original: nil, screen: $screen)
             case .addSearch:   AddSearchScreen(screen: $screen)
             case .addConfigure(let svc): AddConfigureScreen(service: svc, screen: $screen)
             case .addManual:   AddManualScreen(screen: $screen)
-            case .editForward(let id): EditForwardScreen(forwardID: id, screen: $screen)
+            case .editForward(let id):
+                if let forward = app.forwards.first(where: { $0.id == id }), forward.ssh != nil {
+                    SSHForwardScreen(original: forward, screen: $screen)
+                } else {
+                    EditForwardScreen(forwardID: id, screen: $screen)
+                }
             case .settings:    SettingsScreen(screen: $screen)
             }
         }
         .frame(width: 400)
         .fixedSize(horizontal: false, vertical: true)
-        .background(.regularMaterial)
+    }
+}
+
+// Shared by the popover and the template image in the macOS menu bar.
+struct TunnelGlyph: Shape {
+    func path(in rect: CGRect) -> Path {
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y)
+        }
+
+        var path = Path()
+        path.move(to: point(0.06, 0.88))
+        path.addLine(to: point(0.06, 0.51))
+        path.addCurve(to: point(0.94, 0.51), control1: point(0.06, -0.06), control2: point(0.94, -0.06))
+        path.addLine(to: point(0.94, 0.88))
+        path.addLine(to: point(0.74, 0.88))
+        path.addLine(to: point(0.74, 0.54))
+        path.addCurve(to: point(0.26, 0.54), control1: point(0.74, 0.22), control2: point(0.26, 0.22))
+        path.addLine(to: point(0.26, 0.88))
+        path.closeSubpath()
+
+        return path
     }
 }
 
@@ -62,52 +92,55 @@ private struct ScreenHeader<Leading: View, Trailing: View>: View {
     }
 }
 
-/// Standard leading content: an app icon (no action). Use on root screens.
 private struct HomeIcon: View {
     var body: some View {
-        Image(systemName: "tram.fill.tunnel")
-            .foregroundStyle(.secondary)
+        TunnelGlyph()
+            .stroke(style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round))
+            .frame(width: 17, height: 17)
+            .padding(.horizontal, 1)
+            .accessibilityHidden(true)
     }
 }
 
 /// Standard leading content: a back chevron that runs the action.
 private struct BackButton: View {
     let action: () -> Void
-    @State private var isHovered = false
     var body: some View {
-        Button(action: action) {
-            Image(systemName: "chevron.left")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 28, height: 28)
-                .background(.primary.opacity(isHovered ? 0.10 : 0.06), in: Circle())
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-        .help("Back")
+        HeaderIconButton(systemImage: "chevron.left", help: "Back", action: action)
     }
 }
 
-/// Round soft-button for header icons (settings, refresh, etc).
 private struct HeaderIconButton: View {
     let systemImage: String
     let help: String
+    var prominent = false
+    var busy = false
     let action: () -> Void
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 30, height: 30)
-                .background(.primary.opacity(isHovered ? 0.12 : 0.06), in: Circle())
-                .contentShape(Circle())
+            Group {
+                if busy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(prominent ? Color.white : Color.primary)
+                }
+            }
+            .frame(width: 32, height: 32)
+            .background(
+                prominent ? Color.accentColor.opacity(isHovered ? 0.85 : 1) : Color.primary.opacity(isHovered ? 0.12 : 0.06),
+                in: RoundedRectangle(cornerRadius: 7)
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .help(help)
+        .accessibilityLabel(help)
+        .disabled(busy)
     }
 }
 
@@ -148,42 +181,48 @@ private struct ListScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            Divider()
+                .padding(.bottom, 8)
             if let err = app.configLoadError {
                 configErrorBanner(err)
             }
             content
             footer
         }
+        .padding(.horizontal, 17)
     }
 
     private var header: some View {
         HStack(spacing: 10) {
-            // Brand
-            ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(LinearGradient(
-                        colors: [Color.accentColor.opacity(0.85), Color.accentColor.opacity(0.55)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 24, height: 24)
-                Image(systemName: "tram.fill.tunnel")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-            }
+            HomeIcon()
             Text("Tunnel")
-                .font(.system(size: 15, weight: .semibold, design: .default))
-                .tracking(-0.2)
-
-            Spacer()
-
-            statusBadge
-
-            HeaderIconButton(systemImage: "gearshape", help: "Settings") {
-                screen = .settings
+                .font(.system(size: 19, weight: .bold))
+                .accessibilityAddTraits(.isHeader)
+            if !app.forwards.isEmpty {
+                statusSummary
+            }
+            Spacer(minLength: 8)
+            HStack(spacing: 3) {
+                ListActionButton(icon: "plus", title: "Ajouter un tunnel", size: 17) {
+                    screen = .addType
+                }
+                ListActionButton(icon: "gearshape", title: "Réglages") {
+                    screen = .settings
+                }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(headerDivider, alignment: .bottom)
+        .padding(.horizontal, 3)
+        .padding(.top, 13)
+        .padding(.bottom, 6)
+        .contextMenu {
+            Button("Réglages…", systemImage: "gearshape") {
+                screen = .settings
+            }
+            Button("Recharger les tunnels", systemImage: "arrow.clockwise") {
+                Task { await app.reloadFromDisk() }
+            }
+            .disabled(app.isReloadingConfig)
+        }
     }
 
     private func configErrorBanner(_ message: String) -> some View {
@@ -202,122 +241,182 @@ private struct ListScreen: View {
         .background(.orange.opacity(0.08))
     }
 
-    private var headerDivider: some View {
-        Rectangle().fill(.primary.opacity(0.07)).frame(height: 0.5)
-    }
-
-    @ViewBuilder
-    private var statusBadge: some View {
+    private var statusSummary: some View {
         let s = app.currentSummary()
-        if s.runningCount == 0 && s.failedCount == 0 {
-            EmptyView()
-        } else {
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(badgeColor(s.tone))
-                    .frame(width: 6, height: 6)
-                    .shadow(color: badgeColor(s.tone).opacity(0.6), radius: 2.5)
-                Text(s.failedCount > 0 ? "\(s.runningCount) up · \(s.failedCount) failed" : "\(s.runningCount) running")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+        let idle = app.forwards.filter { (app.states[$0.id] ?? .idle) == .idle }.count
+        return HStack(spacing: 10) {
+            if s.runningCount > 0 {
+                statusDot(count: s.runningCount, label: "\(s.runningCount) \(s.runningCount == 1 ? "actif" : "actifs")", tint: .green)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(.primary.opacity(0.06), in: Capsule())
+            if s.connectingCount > 0 || s.failedCount > 0 {
+                let warnings = [
+                    s.connectingCount > 0 ? "\(s.connectingCount) en cours" : nil,
+                    s.failedCount > 0 ? "\(s.failedCount) \(s.failedCount == 1 ? "échec" : "échecs")" : nil,
+                ].compactMap { $0 }
+                statusDot(count: s.connectingCount + s.failedCount, label: warnings.joined(separator: " · "), tint: .orange)
+            }
+            if idle > 0 {
+                statusDot(count: idle, label: "\(idle) \(idle == 1 ? "arrêté" : "arrêtés")", tint: .gray)
+            }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("État des tunnels")
     }
 
-    private func badgeColor(_ tone: AppState.StatusTone) -> Color {
-        switch tone {
-        case .green: return .green
-        case .yellow: return .yellow
-        case .red: return .red
-        case .grey: return .secondary
+    private func statusDot(count: Int, label: String, tint: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(tint)
+                .frame(width: 6, height: 6)
+            Text(count, format: .number)
+                .font(.system(size: 11, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
         }
+        .fixedSize()
+        .help(label)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
     }
 
     @ViewBuilder
     private var content: some View {
         if app.forwards.isEmpty {
-            EmptyStateView { screen = .addSearch }
+            EmptyStateView()
         } else {
+            let kubernetes = app.forwards.filter { $0.ssh == nil }
+            let ssh = app.forwards.filter { $0.ssh != nil }
             ScrollView {
-                LazyVStack(spacing: 4) {
-                    ForEach(app.forwards) { fw in
-                        ForwardRow(
-                            forward: fw,
-                            state: app.states[fw.id] ?? .idle,
-                            isExpanded: expandedID == fw.id,
-                            onToggleExpand: {
-                                // Instant expand/collapse — no SwiftUI animation here.
-                                // The popover (animates = false) resizes in the same
-                                // frame, so the user sees one coherent change instead
-                                // of two unsynchronised animations.
-                                expandedID = expandedID == fw.id ? nil : fw.id
-                            },
-                            onEdit: { screen = .editForward(fw.id) }
-                        )
+                VStack(spacing: 8) {
+                    if !kubernetes.isEmpty {
+                        tunnelSection(kubernetes, isSSH: false)
+                    }
+                    if !kubernetes.isEmpty && !ssh.isEmpty {
+                        Divider()
+                    }
+                    if !ssh.isEmpty {
+                        tunnelSection(ssh, isSSH: true)
                     }
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 8)
+                .padding(.bottom, 8)
             }
             .frame(maxHeight: 460)
         }
     }
 
-    private var footer: some View {
-        HStack(spacing: 0) {
-            Button {
-                screen = .addSearch
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .bold))
-                    Text("Add forward").font(.system(size: 12, weight: .semibold))
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .background(
-                    LinearGradient(
-                        colors: [Color.accentColor, Color.accentColor.opacity(0.85)],
-                        startPoint: .top, endPoint: .bottom),
-                    in: Capsule()
+    private func tunnelSection(_ forwards: [PortForward], isSSH: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 10) {
+                ProtocolIcon(isSSH: isSSH)
+                Text(isSSH ? "SSH" : "Kubernetes")
+                    .font(.system(size: 15, weight: .bold))
+                    .accessibilityAddTraits(.isHeader)
+            }
+            .padding(.horizontal, 3)
+            .padding(.bottom, 3)
+
+            ForEach(forwards) { fw in
+                ForwardRow(
+                    forward: fw,
+                    state: app.states[fw.id] ?? .idle,
+                    isExpanded: expandedID == fw.id,
+                    onToggleExpand: { expandedID = expandedID == fw.id ? nil : fw.id },
+                    onEdit: { screen = .editForward(fw.id) }
                 )
-                .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
-                .shadow(color: Color.accentColor.opacity(0.25), radius: 4, y: 1)
             }
-            .buttonStyle(.plain)
+        }
+    }
 
-            Group {
-                if app.isReloadingConfig {
-                    ProgressView().controlSize(.small).frame(width: 30, height: 30)
-                } else {
-                    HeaderIconButton(systemImage: "arrow.clockwise", help: "Reload forwards.json") {
-                        Task { await app.reloadFromDisk() }
-                    }
-                }
-            }
-            .padding(.leading, 8)
-
-            Spacer()
-
+    private var footer: some View {
+        VStack(spacing: 4) {
+            Divider()
             Button {
                 NSApp.terminate(nil)
             } label: {
-                Text("Quit")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                HStack {
+                    Text("Quitter Tunnel")
+                    Spacer()
+                    Text("⌘Q")
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+                .font(.system(size: 14))
+                .padding(.horizontal, 3)
+                .frame(height: 32)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .keyboardShortcut("q", modifiers: .command)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(headerDivider, alignment: .top)
+        .padding(.bottom, 8)
+    }
+}
+
+private struct ListActionButton: View {
+    let icon: String
+    let title: String
+    var size: CGFloat = 14
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: size, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .background(.primary.opacity(isHovered ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help(title)
+        .accessibilityLabel(title)
+    }
+}
+
+private struct ProtocolIcon: View {
+    let isSSH: Bool
+
+    var body: some View {
+        ZStack {
+            if isSSH {
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(Color(nsColor: .darkGray))
+                HStack(alignment: .bottom, spacing: 2) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                    RoundedRectangle(cornerRadius: 1)
+                        .frame(width: 7, height: 1.5)
+                }
+                .foregroundStyle(.white)
+            } else {
+                Canvas { context, size in
+                    let center = CGPoint(x: size.width / 2, y: size.height / 2)
+                    func point(_ angle: Double, _ radius: Double) -> CGPoint {
+                        CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius)
+                    }
+
+                    var badge = Path()
+                    var spokes = Path()
+                    for i in 0..<7 {
+                        let angle = 2 * Double.pi * Double(i) / 7 - .pi / 2
+                        let corner = point(angle, size.height / 2)
+                        if i == 0 { badge.move(to: corner) } else { badge.addLine(to: corner) }
+                        spokes.move(to: center)
+                        spokes.addLine(to: point(angle, size.height * 0.36))
+                    }
+                    badge.closeSubpath()
+                    context.fill(badge, with: .color(Color(red: 0.19, green: 0.42, blue: 0.90)))
+                    let radius = size.height * 0.24
+                    spokes.addEllipse(in: CGRect(x: center.x - radius, y: center.y - radius,
+                                                  width: radius * 2, height: radius * 2))
+                    context.stroke(spokes, with: .color(.white), style: StrokeStyle(lineWidth: 1.15, lineCap: .round))
+                }
+            }
+        }
+        .frame(width: 25, height: 25)
+        .accessibilityHidden(true)
     }
 }
 
@@ -330,16 +429,9 @@ private struct ManualEntryCTA: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(LinearGradient(
-                            colors: [Color.accentColor.opacity(0.7), Color.accentColor.opacity(0.45)],
-                            startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .frame(width: 28, height: 28)
-                    Image(systemName: "keyboard")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
+                Image(systemName: "keyboard")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Enter manually")
                         .font(.system(size: 13, weight: .semibold))
@@ -376,42 +468,12 @@ private struct ManualEntryCTA: View {
 // MARK: - Empty state
 
 private struct EmptyStateView: View {
-    let onAdd: () -> Void
-
     var body: some View {
-        VStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(LinearGradient(
-                        colors: [Color.accentColor.opacity(0.18), Color.accentColor.opacity(0.05)],
-                        startPoint: .top, endPoint: .bottom))
-                    .frame(width: 56, height: 56)
-                Image(systemName: "tram.fill.tunnel")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-            }
-            VStack(spacing: 3) {
-                Text("No forwards yet")
-                    .font(.system(size: 14, weight: .semibold))
-                Text("Add a kubectl port-forward to get started")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-            Button(action: onAdd) {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus").font(.system(size: 11, weight: .bold))
-                    Text("Add your first forward").font(.system(size: 12, weight: .semibold))
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14).padding(.vertical, 7)
-                .background(
-                    LinearGradient(colors: [Color.accentColor, Color.accentColor.opacity(0.85)],
-                                   startPoint: .top, endPoint: .bottom),
-                    in: Capsule()
-                )
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 4)
+        VStack(spacing: 6) {
+            HomeIcon().foregroundStyle(.secondary).padding(.bottom, 4)
+            Text("Aucun tunnel").font(.headline)
+            Text("Ajoutez un tunnel SSH ou Kubernetes avec le bouton +.")
+                .font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 36)
@@ -429,40 +491,33 @@ private struct ForwardRow: View {
     let onEdit: () -> Void
 
     @State private var isHovered = false
-    @State private var isActionHovered = false
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header (always visible, click to expand)
-            HStack(spacing: 10) {
-                accentBar
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(forward.displayName)
-                            .font(.system(size: 13, weight: .semibold))
-                            .lineLimit(1)
-                        if state.isRunning {
-                            Text("LIVE")
-                                .font(.system(size: 8, weight: .black))
-                                .tracking(0.6)
-                                .foregroundStyle(.green)
-                                .padding(.horizontal, 4).padding(.vertical, 1.5)
-                                .background(.green.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
+            HStack(spacing: 5) {
+                Button(action: onToggleExpand) {
+                    HStack(spacing: 8) {
+                        HStack(spacing: 6) {
+                            Text(forward.displayName).font(.system(size: 14))
+                                .lineLimit(1)
+                            Text(verbatim: ":\(forward.localPort)")
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .fixedSize()
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        stateLabel
                     }
-                    Text("\(shortContext(forward.context)) · \(forward.namespace) / \(forward.serviceName)")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    .frame(height: 28)
+                    .contentShape(Rectangle())
                 }
-                Spacer(minLength: 6)
-                portPill
+                .buttonStyle(.plain)
+                .help("\(forward.displayName) · \(forward.portMapping) · \(forward.qualifiedTarget)")
+                .accessibilityLabel("\(forward.displayName), port \(forward.localPort), \(statusAppearance.title)")
+                .accessibilityHint(isExpanded ? "Masquer les détails" : "Afficher les détails")
                 actionButton
             }
-            .contentShape(Rectangle())
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .onTapGesture { onToggleExpand() }
+            .padding(.horizontal, 3)
             .onHover { isHovered = $0 }
 
             if isExpanded {
@@ -472,98 +527,60 @@ private struct ForwardRow: View {
                     .padding(.top, 2)
             }
         }
-        .background(rowBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(borderColor, lineWidth: 0.5)
-        )
+        .background(.primary.opacity(isHovered || isExpanded ? 0.06 : 0),
+                    in: RoundedRectangle(cornerRadius: 7))
     }
 
-    private var accentBar: some View {
-        RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-            .fill(stateColor)
-            .frame(width: 3, height: 28)
-            .opacity(state.isActive || state.isFailed ? 1 : 0.25)
-            .shadow(color: state.isRunning ? .green.opacity(0.5) : .clear, radius: 3)
+    private var stateLabel: some View {
+        let status = statusAppearance
+        return HStack(spacing: 7) {
+            Group {
+                if state == .idle {
+                    Circle()
+                        .fill(.secondary.opacity(0.65))
+                        .frame(width: 12, height: 12)
+                } else {
+                    Image(systemName: status.icon)
+                        .font(.system(size: 16, weight: .medium))
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, status.tint)
+                }
+            }
+            .frame(width: 17)
+            Text(status.title)
+                .font(.system(size: 12))
+                .foregroundStyle(status.text)
+                .lineLimit(1)
+        }
+        .frame(width: 124, alignment: .leading)
+        .accessibilityHidden(true)
     }
 
-    private var stateColor: Color {
+    private var statusAppearance: (title: String, icon: String, tint: Color, text: Color) {
         switch state {
-        case .running: return .green
-        case .connecting: return .yellow
-        case .reconnecting: return .orange
-        case .failed: return .red
-        case .idle: return .secondary
+        case .running:
+            let green = Color(nsColor: .systemGreen)
+            return ("Actif", "checkmark.circle.fill", green, Color(nsColor: NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    ? .systemGreen : NSColor(srgbRed: 0.02, green: 0.38, blue: 0.10, alpha: 1)
+            }))
+        case .connecting: return ("Connexion…", "ellipsis.circle.fill", .orange, .secondary)
+        case .reconnecting: return ("Reconnexion…", "arrow.clockwise.circle.fill", .orange, .secondary)
+        case .failed(.localPortInUse): return ("Port occupé", "exclamationmark.triangle.fill", .red, .red)
+        case .failed: return ("Échec", "exclamationmark.triangle.fill", .red, .red)
+        case .idle: return ("Arrêté", "circle.fill", .secondary, .secondary)
         }
-    }
-
-    private var portPill: some View {
-        HStack(spacing: 4) {
-            Text("\(forward.localPort)").monospacedDigit()
-            Image(systemName: "arrow.left.arrow.right")
-                .font(.system(size: 7, weight: .semibold))
-                .foregroundStyle(.tertiary)
-            Text("\(forward.remotePort)").monospacedDigit()
-        }
-        .font(.system(size: 10, weight: .medium, design: .monospaced))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 7).padding(.vertical, 3)
-        .background(.primary.opacity(0.05), in: Capsule())
-        .overlay(Capsule().strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
     }
 
     private var actionButton: some View {
-        Button {
+        let icon = state.isActive ? "stop.fill" : state.isFailed ? "arrow.clockwise" : "play.fill"
+        let action = state.isActive ? "Arrêter" : state.isFailed ? "Réessayer" : "Démarrer"
+        return ListActionButton(icon: icon, title: "\(action) : \(forward.displayName)") {
             Task {
                 if state.isActive { await app.stop(id: forward.id) }
                 else { await app.start(forward: forward) }
             }
-        } label: {
-            Image(systemName: state.isActive ? "stop.fill" : "play.fill")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(state.isActive ? .red : .green)
-                .frame(width: 24, height: 24)
-                .background(
-                    Circle().fill((state.isActive ? Color.red : Color.green)
-                        .opacity(isActionHovered ? 0.18 : 0.10))
-                )
-                .overlay(
-                    Circle().strokeBorder((state.isActive ? Color.red : Color.green).opacity(0.25), lineWidth: 0.5)
-                )
         }
-        .buttonStyle(.plain)
-        .onHover { isActionHovered = $0 }
-        .help(state.isActive ? "Stop" : "Start")
-    }
-
-    private var rowBackground: some View {
-        Group {
-            if state.isRunning {
-                Color.green.opacity(isHovered ? 0.10 : 0.06)
-            } else if state.isFailed {
-                Color.red.opacity(isHovered ? 0.10 : 0.06)
-            } else if isHovered || isExpanded {
-                Color.primary.opacity(0.05)
-            } else {
-                Color.clear
-            }
-        }
-    }
-
-    private var borderColor: Color {
-        if state.isRunning { return .green.opacity(0.20) }
-        if state.isFailed  { return .red.opacity(0.20) }
-        if isExpanded      { return .primary.opacity(0.10) }
-        return .clear
-    }
-
-    /// Strip the `oidc@` prefix for compactness — `oidc@sparteo` → `sparteo`.
-    private func shortContext(_ ctx: String) -> String {
-        if let at = ctx.firstIndex(of: "@") {
-            return String(ctx[ctx.index(after: at)...])
-        }
-        return ctx
     }
 }
 
@@ -575,36 +592,60 @@ private struct ExpandedDetail: View {
 
     @State private var portHolder: PortHolder?
     @State private var isFreeing: Bool = false
+    @State private var showsLogs = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Divider().opacity(0.4)
-            statusLine
             if case .failed(.localPortInUse(let port)) = state {
                 portConflictPanel(port: port)
-                    .padding(.leading, 11)
+            } else {
+                Text(forward.qualifiedTarget)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                statusLine
             }
             HStack(spacing: 8) {
                 Toggle(isOn: Binding(
                     get: { forward.autoStart },
                     set: { v in Task { await app.setAutoStart(id: forward.id, v) } }
                 )) {
-                    Text("Auto-start at launch")
+                    Text("Démarrer à l’ouverture")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
                 .toggleStyle(.checkbox)
                 .controlSize(.small)
                 Spacer()
-                IconButton(systemImage: "pencil", help: "Edit forward", action: onEdit)
-                IconButton(systemImage: "trash", help: "Delete forward", destructive: true) {
+                ListActionButton(icon: "pencil", title: "Modifier le tunnel", size: 12, action: onEdit)
+                ListActionButton(icon: "trash", title: "Supprimer le tunnel", size: 12) {
                     Task { await app.delete(id: forward.id) }
                 }
             }
-            .padding(.leading, 11) // align with content past accent bar
             if let lines = app.liveLogs[forward.id], !lines.isEmpty {
-                logsView(lines)
-                    .padding(.leading, 11)
+                VStack(alignment: .leading, spacing: 4) {
+                    Button {
+                        showsLogs.toggle()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: showsLogs ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 8, weight: .semibold))
+                                .frame(width: 10)
+                                .accessibilityHidden(true)
+                            Text("Journal de connexion")
+                            Spacer(minLength: 0)
+                        }
+                        .frame(minHeight: 24)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(showsLogs ? "Déplié" : "Replié")
+
+                    if showsLogs {
+                        logsView(lines)
+                    }
+                }
+                .font(.caption)
             }
         }
         .padding(.top, 4)
@@ -620,8 +661,9 @@ private struct ExpandedDetail: View {
         case .connecting:
             statusPill("Connecting…", icon: "ellipsis.circle", color: .yellow, base: baseFont, bg: pillStyle)
         case .running(let since, let binding):
-            statusPill("\(binding) · since \(since.formatted(date: .omitted, time: .shortened))",
-                       icon: "circle.fill", color: .green, base: baseFont, bg: pillStyle)
+            Label("\(binding) · since \(since.formatted(date: .omitted, time: .shortened))", systemImage: "link")
+                .font(baseFont).foregroundStyle(.secondary)
+                .textSelection(.enabled)
         case .reconnecting(let attempt, let nextAt, let lastError):
             VStack(alignment: .leading, spacing: 4) {
                 statusPill("Reconnecting (#\(attempt)) · next \(nextAt.formatted(date: .omitted, time: .standard))",
@@ -666,75 +708,47 @@ private struct ExpandedDetail: View {
 
     @ViewBuilder
     private func portConflictPanel(port: Int) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.octagon.fill")
-                    .font(.system(size: 11)).foregroundStyle(.red)
-                Text(holderHeadline(port: port))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.primary)
-            }
-            HStack(spacing: 8) {
-                Button {
-                    isFreeing = true
-                    Task {
-                        _ = await app.freePortAndRetry(forwardID: forward.id)
-                        isFreeing = false
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        if isFreeing {
-                            ProgressView().controlSize(.mini).tint(.white)
-                        } else {
-                            Image(systemName: "bolt.slash.fill").font(.system(size: 10, weight: .bold))
-                        }
-                        Text(isFreeing ? "Freeing…" : "Free port and retry")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(
-                        LinearGradient(colors: [Color.red.opacity(0.95), Color.red.opacity(0.75)],
-                                       startPoint: .top, endPoint: .bottom),
-                        in: Capsule()
-                    )
+        HStack(spacing: 8) {
+            Group {
+                if let holder = portHolder {
+                    Text("\(holder.command ?? "Processus inconnu") · PID \(String(holder.pid))")
+                } else {
+                    Text("Processus non identifié")
                 }
-                .buttonStyle(.plain)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .textSelection(.enabled)
+
+            Spacer(minLength: 0)
+
+            Button {
+                isFreeing = true
+                Task {
+                    _ = await app.freePortAndRetry(forwardID: forward.id)
+                    isFreeing = false
+                }
+            } label: {
+                Text(isFreeing ? "Libération…" : "Libérer et réessayer")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.accentColor)
+            }
+            .buttonStyle(.plain)
+            .disabled(isFreeing)
+            .help("Arrête le processus qui utilise le port \(port), puis relance le tunnel")
+        }
+        .padding(.vertical, 3)
+        .contextMenu {
+            Button("Vérifier le port") { Task { await loadPortHolder() } }
                 .disabled(isFreeing)
-                .help("Send SIGTERM (then SIGKILL) to whichever process holds port \(port), then retry")
-
-                Button {
-                    Task { await loadPortHolder() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8).padding(.vertical, 5)
-                        .background(.primary.opacity(0.06), in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .help("Re-check who is holding the port")
-                Spacer()
-            }
+            Button("Ignorer l’erreur") { Task { await app.acknowledgeFailure(id: forward.id) } }
+                .disabled(isFreeing)
         }
-        .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(.red.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(.red.opacity(0.20), lineWidth: 0.5)
-        )
-        .task { await loadPortHolder() }
-    }
-
-    private func holderHeadline(port: Int) -> String {
-        if let h = portHolder {
-            let name = h.command ?? "process"
-            return "Port \(port) is held by \(name) (PID \(h.pid))"
+        .task(id: port) {
+            portHolder = nil
+            await loadPortHolder()
         }
-        return "Port \(port) is in use"
     }
 
     @MainActor
@@ -750,20 +764,10 @@ private struct ExpandedDetail: View {
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(color.opacity(0.10), in: Capsule())
         .overlay(Capsule().strokeBorder(color.opacity(0.20), lineWidth: 0.5))
-        .padding(.leading, 11)
     }
 
     private func logsView(_ lines: [String]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 4) {
-                Image(systemName: "terminal")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.tertiary)
-                Text("OUTPUT")
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.6)
-                    .foregroundStyle(.tertiary)
-            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
                     ForEach(Array(lines.suffix(80).enumerated()), id: \.offset) { _, line in
@@ -779,12 +783,164 @@ private struct ExpandedDetail: View {
             .frame(maxHeight: 140)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(.black.opacity(0.25))
+                        .fill(.primary.opacity(0.05))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .strokeBorder(.primary.opacity(0.06), lineWidth: 0.5)
             )
+        }
+    }
+}
+
+// MARK: - Add: tunnel type and SSH form
+
+private struct AddTypeScreen: View {
+    @Binding var screen: MenuBarView.Screen
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScreenHeader(title: "Add tunnel") {
+                BackButton { screen = .list }
+            } trailing: { EmptyView() }
+            Divider()
+            VStack(alignment: .leading, spacing: 8) {
+                option("SSH", subtitle: "Forward a port through an SSH host or alias", icon: "terminal") {
+                    screen = .addSSH
+                }
+                option("Kubernetes", subtitle: "Find a service in your clusters", icon: "cube") {
+                    screen = .addSearch
+                }
+            }
+            .padding(12)
+        }
+    }
+
+    private func option(_ title: String, subtitle: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon).foregroundStyle(.secondary).frame(width: 26)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.headline)
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+            }
+            .padding(7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.bordered)
+    }
+}
+
+private struct SSHForwardScreen: View {
+    @Environment(AppState.self) private var app
+    let original: PortForward?
+    @Binding var screen: MenuBarView.Screen
+    @State private var name: String
+    @State private var host: String
+    @State private var remoteHost: String
+    @State private var localPort: String
+    @State private var remotePort: String
+    @State private var autoStart: Bool
+    @State private var startNow = true
+    @State private var saving = false
+    @State private var error: String?
+
+    init(original: PortForward?, screen: Binding<MenuBarView.Screen>) {
+        self.original = original
+        _screen = screen
+        _name = State(initialValue: original?.displayName ?? "")
+        _host = State(initialValue: original?.ssh?.host ?? "")
+        _remoteHost = State(initialValue: original?.ssh?.remoteHost ?? "127.0.0.1")
+        _localPort = State(initialValue: original.map { String($0.localPort) } ?? "")
+        _remotePort = State(initialValue: original.map { String($0.remotePort) } ?? "")
+        _autoStart = State(initialValue: original?.autoStart ?? false)
+    }
+
+    private var back: MenuBarView.Screen { original == nil ? .addType : .list }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScreenHeader(title: original == nil ? "New SSH tunnel" : "Edit SSH tunnel") {
+                BackButton { screen = back }
+            } trailing: { EmptyView() }
+            Divider()
+            VStack(alignment: .leading, spacing: 12) {
+                field("SSH host", placeholder: "e.g. vps", value: $host)
+                Text("Uses your OpenSSH config (~/.ssh/config). A shell alias won't work here.")
+                    .font(.caption).foregroundStyle(.secondary)
+                field("Name (optional)", placeholder: "Defaults to SSH host", value: $name)
+                field("Destination host", placeholder: "127.0.0.1", value: $remoteHost)
+                HStack(alignment: .bottom, spacing: 10) {
+                    field("Local port", placeholder: "8787", value: $localPort)
+                    Image(systemName: "arrow.right").font(.caption).foregroundStyle(.secondary)
+                        .padding(.bottom, 4).accessibilityHidden(true)
+                    field("Destination port", placeholder: "8787", value: $remotePort)
+                }
+                Text("Listens only on 127.0.0.1. The destination is reached from the SSH host.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 18) {
+                    Toggle("Auto-start at launch", isOn: $autoStart)
+                    if original == nil { Toggle("Start now", isOn: $startNow) }
+                }
+                .toggleStyle(.checkbox).controlSize(.small)
+                if let original, app.states[original.id]?.isActive == true {
+                    Text("Saving will restart this tunnel.").font(.caption).foregroundStyle(.secondary)
+                }
+                if let error { Text(error).font(.caption).foregroundStyle(.red) }
+            }
+            .padding(14)
+            Divider()
+            HStack {
+                Button("Cancel") { screen = back }
+                Spacer()
+                Button(original == nil && startNow ? "Save & Start" : "Save") { save() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 9)
+        }
+        .disabled(saving)
+    }
+
+    private func field(_ label: String, placeholder: String, value: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.caption.weight(.medium))
+            TextField(label, text: value, prompt: Text(placeholder))
+                .labelsHidden().textFieldStyle(.roundedBorder)
+        }
+    }
+
+    private func save() {
+        let cleanHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let target = SSHForwardTarget(host: cleanHost, remoteHost: remoteHost.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard target.isValid else { error = "Enter an SSH alias or hostname and a destination hostname or IPv4 address."; return }
+        guard let local = Int(localPort), (1024...65535).contains(local) else {
+            error = "Local port must be 1024–65535."; return
+        }
+        guard let remote = Int(remotePort), (1...65535).contains(remote) else {
+            error = "Destination port must be 1–65535."; return
+        }
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var forward = original ?? PortForward(displayName: cleanHost, ssh: target, localPort: local, remotePort: remote)
+        forward.displayName = cleanName.isEmpty ? cleanHost : cleanName
+        forward.ssh = target
+        forward.localPort = local
+        forward.remotePort = remote
+        forward.autoStart = autoStart
+        saving = true
+        Task {
+            if let original {
+                let active = app.states[original.id]?.isActive == true
+                await app.update(forward)
+                if active { await app.start(forward: forward) }
+            } else {
+                await app.add(forward)
+                if startNow { await app.start(forward: forward) }
+            }
+            screen = .list
         }
     }
 }
@@ -799,8 +955,8 @@ private struct AddSearchScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScreenHeader(title: "Add forward") {
-                BackButton { screen = .list }
+            ScreenHeader(title: "Kubernetes services") {
+                BackButton { screen = .addType }
             } trailing: {
                 HeaderIconButton(systemImage: "arrow.clockwise", help: "Refresh catalog") {
                     Task { await app.refreshCatalog(force: true) }
@@ -887,13 +1043,14 @@ private struct AddSearchScreen: View {
                         Section {
                             ForEach(group.services) { svc in
                                 resultRow(svc)
-                                Divider().opacity(0.3)
                             }
                         } header: {
-                            Text(group.key)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 14).padding(.vertical, 4)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(group.namespace).font(.caption.weight(.semibold))
+                                Text(group.context).font(.caption2).foregroundStyle(.secondary)
+                                    .lineLimit(1).truncationMode(.middle)
+                            }
+                                .padding(.horizontal, 14).padding(.vertical, 6)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(.thinMaterial)
                         }
@@ -905,18 +1062,21 @@ private struct AddSearchScreen: View {
     }
 
     private func resultRow(_ svc: KubeService) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "circle.fill").font(.system(size: 5)).foregroundStyle(.green)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(svc.name).font(.body)
-                Text(portsLabel(svc)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        Button {
+            screen = .addConfigure(svc)
+        } label: {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(svc.name).font(.body)
+                    Text(portsLabel(svc)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
             }
-            Spacer()
-            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+            .padding(.horizontal, 14).padding(.vertical, 6)
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 14).padding(.vertical, 6)
-        .contentShape(Rectangle())
-        .onTapGesture { screen = .addConfigure(svc) }
+        .buttonStyle(.plain)
     }
 
     private func portsLabel(_ svc: KubeService) -> String {
@@ -927,7 +1087,12 @@ private struct AddSearchScreen: View {
         }.joined(separator: " · ")
     }
 
-    private struct Group { let key: String; let services: [KubeService] }
+    private struct Group {
+        let key: String
+        let services: [KubeService]
+        var context: String { services.first?.context ?? "" }
+        var namespace: String { services.first?.namespace ?? "" }
+    }
     private func groupResults(_ services: [KubeService]) -> [Group] {
         var dict: [String: [KubeService]] = [:]
         for svc in services {
@@ -1270,9 +1435,9 @@ private struct EditForwardScreen: View {
         .onAppear {
             guard !loaded, let pf = current else { return }
             displayName = pf.displayName
-            contextName = pf.context
-            namespace = pf.namespace
-            serviceName = pf.serviceName
+            contextName = pf.context ?? ""
+            namespace = pf.namespace ?? ""
+            serviceName = pf.serviceName ?? ""
             localPort = String(pf.localPort)
             remotePort = String(pf.remotePort)
             autoStart = pf.autoStart
@@ -1312,9 +1477,6 @@ private struct EditForwardScreen: View {
         let wasActive = app.states[original.id]?.isActive == true
 
         Task {
-            if wasActive {
-                await app.stop(id: original.id)
-            }
             await app.update(updated)
             if wasActive {
                 await app.start(forward: updated)
@@ -1334,7 +1496,7 @@ private struct SettingsScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScreenHeader(title: "Settings") {
+            ScreenHeader(title: "Réglages") {
                 BackButton { screen = .list }
             } trailing: {
                 EmptyView()
@@ -1373,7 +1535,8 @@ private struct SettingsScreen: View {
                     ForEach(app.contexts) { ctx in
                         ClusterRow(
                             ctx: ctx,
-                            errorMessage: app.contextRefreshErrors[ctx.name].map(prettifyClusterError)
+                            errorMessage: app.contextRefreshErrors[ctx.name].map(prettifyClusterError),
+                            errorDetails: app.contextRefreshErrors[ctx.name]
                         )
                     }
                 }
@@ -1419,14 +1582,15 @@ private struct SettingsScreen: View {
 
     private var aboutCard: some View {
         SettingsCard(
-            icon: "tram.fill.tunnel",
+            icon: "arrow.left.arrow.right.circle",
             iconTint: .accentColor,
             title: "About",
             subtitle: nil
         ) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Tunnel 0.1.0").font(.system(size: 12, weight: .semibold))
-                Text("kubectl port-forward manager")
+                Text("Tunnel \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("SSH and Kubernetes port forwards")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
@@ -1449,6 +1613,9 @@ private struct SettingsScreen: View {
     /// Convert a raw KubectlError dump into a readable one-or-two-liner.
     private func prettifyClusterError(_ raw: String) -> String {
         let lower = raw.lowercased()
+        if lower.contains("decodingfailed") {
+            return "Couldn’t read the service list returned by kubectl."
+        }
         if lower.contains("forbidden") {
             return "Forbidden — no cluster-wide list permission. Use Manual entry to add forwards."
         }
@@ -1468,7 +1635,7 @@ private struct SettingsScreen: View {
             let trimmed = line.replacingOccurrences(of: "\\n", with: " ").prefix(140)
             return String(trimmed)
         }
-        return String(raw.prefix(140))
+        return "Couldn’t load Kubernetes services."
     }
 }
 
@@ -1521,43 +1688,43 @@ private struct SettingsCard<Content: View>: View {
 private struct ClusterRow: View {
     let ctx: KubeContext
     let errorMessage: String?
+    let errorDetails: String?
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 7, height: 7)
-                .padding(.top, 5)
+            Image(systemName: errorMessage == nil ? "server.rack" : "exclamationmark.triangle")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(errorMessage == nil ? Color.secondary : .orange)
+                .frame(width: 16)
+                .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(ctx.name)
                         .font(.system(size: 11.5, weight: ctx.isCurrent ? .semibold : .regular))
                     if ctx.isCurrent {
-                        Text("active")
-                            .font(.system(size: 8, weight: .bold))
-                            .tracking(0.5)
-                            .foregroundStyle(.green)
-                            .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(.green.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
+                        Text("Current").font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
                     }
                     Spacer(minLength: 0)
                 }
-                if let errorMessage {
-                    Text(errorMessage)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.red)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                if let errorMessage, let errorDetails {
+                    DisclosureGroup {
+                        Text(errorDetails)
+                            .font(.system(size: 10, design: .monospaced))
+                            .textSelection(.enabled)
+                            .padding(.top, 4)
+                    } label: {
+                        Text(errorMessage).font(.caption)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .foregroundStyle(.secondary)
                 }
             }
         }
         .padding(.vertical, 3)
     }
 
-    private var statusColor: Color {
-        if errorMessage != nil { return .red }
-        return ctx.isCurrent ? .green : .secondary
-    }
 }
 
 private struct PillButton: View {
@@ -1587,29 +1754,5 @@ private struct PillButton: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-    }
-}
-
-// MARK: - Status dot (shared)
-
-struct StatusDot: View {
-    let state: SessionState
-
-    var body: some View {
-        Circle()
-            .fill(color)
-            .frame(width: 9, height: 9)
-            .overlay(Circle().strokeBorder(.black.opacity(0.1)))
-            .help(state.label)
-    }
-
-    private var color: Color {
-        switch state {
-        case .running: return .green
-        case .connecting: return .yellow
-        case .reconnecting: return .orange
-        case .failed: return .red
-        case .idle: return Color.secondary.opacity(0.5)
-        }
     }
 }
