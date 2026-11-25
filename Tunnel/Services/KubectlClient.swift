@@ -38,7 +38,12 @@ actor KubectlClient {
     func setExtraPath(_ path: String) { self.extraPath = path }
 
     static func detectKubectlPath() -> String {
-        let candidates = ["/usr/local/bin/kubectl", "/opt/homebrew/bin/kubectl", "/usr/bin/kubectl"]
+        let candidates = [
+            "\(NSHomeDirectory())/.rd/bin/kubectl",
+            "/usr/local/bin/kubectl",
+            "/opt/homebrew/bin/kubectl",
+            "/usr/bin/kubectl",
+        ]
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
             return path
         }
@@ -154,10 +159,21 @@ actor KubectlClient {
         guard FileManager.default.isExecutableFile(atPath: executablePath) else {
             throw KubectlError.notFound
         }
+        return try Self.streamProcess(executablePath, args: args, environment: makeEnvironment())
+    }
+
+    nonisolated static func streamSSH(_ args: [String]) throws -> (Process, AsyncStream<KubectlEvent>) {
+        try streamProcess("/usr/bin/ssh", args: args, environment: nil)
+    }
+
+    private nonisolated static func streamProcess(
+        _ executablePath: String, args: [String], environment: [String: String]?
+    ) throws -> (Process, AsyncStream<KubectlEvent>) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executablePath)
         process.arguments = args
-        process.environment = makeEnvironment()
+        process.environment = environment
+        process.standardInput = FileHandle.nullDevice
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -167,12 +183,16 @@ actor KubectlClient {
         let stream = AsyncStream<KubectlEvent> { (continuation: AsyncStream<KubectlEvent>.Continuation) in
             let stdoutAccum = LineAccumulator { line in continuation.yield(.stdoutLine(line)) }
             let stderrAccum = LineAccumulator { line in continuation.yield(.stderrLine(line)) }
+            let drained = DispatchGroup()
+            drained.enter()
+            drained.enter()
 
             stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
                 if data.isEmpty {
                     handle.readabilityHandler = nil
                     stdoutAccum.flush()
+                    drained.leave()
                     return
                 }
                 stdoutAccum.feed(data)
@@ -182,18 +202,18 @@ actor KubectlClient {
                 if data.isEmpty {
                     handle.readabilityHandler = nil
                     stderrAccum.flush()
+                    drained.leave()
                     return
                 }
                 stderrAccum.feed(data)
             }
 
             process.terminationHandler = { proc in
-                try? stdoutPipe.fileHandleForReading.close()
-                try? stderrPipe.fileHandleForReading.close()
-                stdoutAccum.flush()
-                stderrAccum.flush()
-                continuation.yield(.terminated(status: proc.terminationStatus))
-                continuation.finish()
+                let status = proc.terminationStatus
+                drained.notify(queue: .global()) {
+                    continuation.yield(.terminated(status: status))
+                    continuation.finish()
+                }
             }
 
             continuation.onTermination = { @Sendable _ in
@@ -201,7 +221,14 @@ actor KubectlClient {
             }
         }
 
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            process.terminationHandler = nil
+            throw error
+        }
         return (process, stream)
     }
 }

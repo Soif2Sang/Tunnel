@@ -8,11 +8,13 @@ struct PortHolder: Equatable, Sendable {
 /// Detects whether a local TCP port is already bound by another process,
 /// and (optionally) terminates the holder.
 struct LocalPortChecker: Sendable {
-    func processUsing(port: Int) async -> Int32? {
+    func processUsing(port: Int, pid: Int32? = nil, ipv4LoopbackOnly: Bool = false) async -> Int32? {
         await withCheckedContinuation { (cont: CheckedContinuation<Int32?, Never>) in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-            process.arguments = ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-t"]
+            let filter = pid.map { ["-a", "-p", String($0)] } ?? []
+            let address = ipv4LoopbackOnly ? "4TCP@127.0.0.1" : "TCP"
+            process.arguments = filter + ["-nP", "-i\(address):\(port)", "-sTCP:LISTEN", "-t"]
             let pipe = Pipe()
             process.standardOutput = pipe
             process.standardError = Pipe()

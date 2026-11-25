@@ -42,7 +42,11 @@ actor ConfigStore {
             guard seen.insert(f.id).inserted else {
                 throw ValidationError(description: "Duplicate id \(f.id.uuidString)")
             }
-            guard !f.context.isEmpty, !f.namespace.isEmpty, !f.serviceName.isEmpty else {
+            if let ssh = f.ssh {
+                guard ssh.isValid, f.context == nil, f.namespace == nil, f.serviceName == nil else {
+                    throw ValidationError(description: "\(label): invalid or mixed SSH target")
+                }
+            } else if f.context?.isEmpty != false || f.namespace?.isEmpty != false || f.serviceName?.isEmpty != false {
                 throw ValidationError(description: "\(label): context, namespace and serviceName are required")
             }
             guard (1024...65535).contains(f.localPort) else {

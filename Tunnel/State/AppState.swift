@@ -68,9 +68,11 @@ final class AppState {
         }
         hasBootstrapped = true
 
-        await refreshContexts()
-        // Kick off catalog refresh in background; don't block UI.
-        Task { await refreshCatalog() }
+        // SSH forwards don't depend on Kubernetes discovery.
+        Task {
+            await refreshContexts()
+            await refreshCatalog()
+        }
 
         // Auto-start.
         for f in forwards where f.autoStart {

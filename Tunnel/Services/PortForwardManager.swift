@@ -8,6 +8,9 @@ actor PortForwardManager {
     private var sessions: [UUID: PortForwardSession] = [:]
     private var restartTasks: [UUID: Task<Void, Never>] = [:]
     private var attemptCounters: [UUID: Int] = [:]
+    private var isLaunchingGCloudLogin = false
+    private var gcloudLoginTask: Task<Void, Error>?
+    private var gcloudAuthFailedIDs: Set<UUID> = []
 
     private let backoffSchedule: [TimeInterval] = [1, 2, 5, 10, 10, 10, 30, 30, 60, 60]
     private let maxAttempts: Int
@@ -44,37 +47,36 @@ actor PortForwardManager {
 
     /// Start (or restart) a forward.
     func start(forward: PortForward) async {
+        restartTasks.removeValue(forKey: forward.id)?.cancel()
+        attemptCounters[forward.id] = 0
+        await launch(forward: forward, replacing: sessions[forward.id])
+    }
+
+    private func launch(forward: PortForward, replacing previous: PortForwardSession?) async {
+        guard !Task.isCancelled, !isShuttingDown, sessions[forward.id] === previous else { return }
         // Pre-flight: local port available?
-        if let pid = await portChecker.processUsing(port: forward.localPort), pid != currentSessionPID(for: forward.id) {
+        let pid = await portChecker.processUsing(port: forward.localPort)
+        guard !Task.isCancelled, !isShuttingDown, sessions[forward.id] === previous else { return }
+        if let pid, pid != currentSessionPID(for: forward.id) {
             await emitState(forward.id, .failed(reason: .localPortInUse(forward.localPort)))
             return
         }
 
-        // Cancel any pending restart.
-        restartTasks[forward.id]?.cancel()
-        restartTasks.removeValue(forKey: forward.id)
-
-        // Stop any previous session.
-        if let existing = sessions[forward.id] {
-            await existing.stop(reason: .userStopped)
-        }
-        attemptCounters[forward.id] = 0
-
         let session = PortForwardSession(forward: forward, client: client)
-        await setupCallbacks(on: session)
+        setupCallbacks(on: session)
         sessions[forward.id] = session
+        if let previous { await previous.stop(waitForExit: true) }
         await session.start()
     }
 
     /// Stop a forward (user-initiated). Cancels any pending restart.
     func stop(id: UUID) async {
+        gcloudAuthFailedIDs.remove(id)
         restartTasks[id]?.cancel()
         restartTasks.removeValue(forKey: id)
         attemptCounters[id] = 0
-        if let session = sessions[id] {
-            await session.stop(reason: .userStopped)
-        }
-        sessions.removeValue(forKey: id)
+        if let session = sessions.removeValue(forKey: id) { await session.stop() }
+        if sessions[id] == nil { await emitState(id, .idle) }
     }
 
     func stopAll() async {
@@ -82,10 +84,12 @@ actor PortForwardManager {
         for id in ids { await stop(id: id) }
     }
 
-    /// Final shutdown: cancels all restart timers, terminates every kubectl child,
+    /// Final shutdown: cancels all restart timers, terminates every forwarding child,
     /// and waits up to ~3s for them to exit before SIGKILLing.
     func shutdown() async {
         isShuttingDown = true
+        gcloudLoginTask?.cancel()
+        gcloudAuthFailedIDs.removeAll()
 
         // Cancel all pending restart timers first.
         for (_, task) in restartTasks { task.cancel() }
@@ -123,24 +127,26 @@ actor PortForwardManager {
         return process.processIdentifier
     }
 
-    private func setupCallbacks(on session: PortForwardSession) async {
+    private func setupCallbacks(on session: PortForwardSession) {
         // The session calls these on the main actor.
-        session.onLogLine = { [weak self] id, line in
-            Task { await self?.forwardLogLine(id: id, line: line) }
+        session.onLogLine = { [weak self, weak session] id, line in
+            Task { await self?.forwardLogLine(id: id, line: line, source: session) }
         }
-        session.onStateChange = { [weak self] id, state in
-            Task { await self?.handleStateChange(id: id, state: state) }
+        session.onStateChange = { [weak self, weak session] id, state in
+            Task { await self?.handleStateChange(id: id, state: state, source: session) }
         }
     }
 
-    private func forwardLogLine(id: UUID, line: String) async {
+    private func forwardLogLine(id: UUID, line: String, source: PortForwardSession?) async {
+        guard let source, sessions[id] === source else { return }
         let handler = onLogLine
         if let handler {
             await MainActor.run { handler(id, line) }
         }
     }
 
-    private func handleStateChange(id: UUID, state: SessionState) async {
+    private func handleStateChange(id: UUID, state: SessionState, source: PortForwardSession?) async {
+        guard !isShuttingDown, let source, sessions[id] === source, source.state == state else { return }
         // Re-publish to UI.
         let handler = onStateChange
         if let handler {
@@ -148,18 +154,69 @@ actor PortForwardManager {
         }
 
         // If a session moved to .reconnecting (terminated unexpectedly), schedule the next attempt.
-        if case .reconnecting(_, _, let lastError) = state, let session = sessions[id] {
-            await scheduleReconnect(for: session.forward, lastError: lastError)
+        guard sessions[id] === source, source.state == state else { return }
+        if case .reconnecting(_, _, let lastError) = state {
+            await scheduleReconnect(session: source, lastError: lastError)
         }
 
         // Reset counter on a successful run.
         if case .running = state {
             attemptCounters[id] = 0
         }
+
+        if case .failed(reason: .gcloudAuthenticationRequired) = state {
+            guard !isShuttingDown, sessions[id]?.state == state else { return }
+            gcloudAuthFailedIDs.insert(id)
+            await launchGCloudLoginIfNeeded()
+        }
     }
 
-    private func scheduleReconnect(for forward: PortForward, lastError: String) async {
+    private func launchGCloudLoginIfNeeded() async {
+        // Several auto-started forwards can fail together; only open one browser login.
+        guard !isLaunchingGCloudLogin, !isShuttingDown else { return }
+        isLaunchingGCloudLogin = true
+
+        do {
+            let path = await client.extraPath
+            guard !isShuttingDown else {
+                isLaunchingGCloudLogin = false
+                return
+            }
+            let loginTask = Task {
+                try await GCloudAuthLoginLauncher.runLogin(extraPath: path)
+            }
+            gcloudLoginTask = loginTask
+            try await loginTask.value
+
+            // Authentication completed. Retry every forward that failed while
+            // this single login flow was in progress.
+            let forwardsToRetry = gcloudAuthFailedIDs.compactMap { sessions[$0]?.forward }
+            gcloudAuthFailedIDs.removeAll()
+            isLaunchingGCloudLogin = false
+            gcloudLoginTask = nil
+            for forward in forwardsToRetry {
+                guard !isShuttingDown else { break }
+                guard sessions[forward.id]?.state == .failed(reason: .gcloudAuthenticationRequired) else { continue }
+                await start(forward: forward)
+            }
+        } catch {
+            isLaunchingGCloudLogin = false
+            gcloudLoginTask = nil
+            let failedIDs = gcloudAuthFailedIDs
+            gcloudAuthFailedIDs.removeAll()
+            guard !isShuttingDown else { return }
+            for failedID in failedIDs {
+                await emitState(
+                    failedID,
+                    .failed(reason: .other("Google Cloud login failed: \(error.localizedDescription)"))
+                )
+            }
+        }
+    }
+
+    private func scheduleReconnect(session: PortForwardSession, lastError: String) async {
         if isShuttingDown { return }
+        let forward = session.forward
         let attempt = (attemptCounters[forward.id] ?? 0) + 1
         attemptCounters[forward.id] = attempt
         if attempt > maxAttempts {
@@ -169,12 +226,13 @@ actor PortForwardManager {
         let delay = backoffSchedule[min(attempt - 1, backoffSchedule.count - 1)]
         let nextAt = Date().addingTimeInterval(delay)
         await emitState(forward.id, .reconnecting(attempt: attempt, nextAttemptAt: nextAt, lastError: lastError))
+        guard !isShuttingDown, sessions[forward.id] === session else { return }
 
         restartTasks[forward.id]?.cancel()
         restartTasks[forward.id] = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled else { return }
-            await self?.start(forward: forward)
+            await self?.launch(forward: forward, replacing: session)
         }
     }
 

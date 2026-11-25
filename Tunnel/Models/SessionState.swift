@@ -3,6 +3,7 @@ import Foundation
 enum FailureReason: Equatable, Sendable {
     case localPortInUse(Int)
     case authenticationFailed
+    case gcloudAuthenticationRequired
     case kubectlNotFound
     case serviceNotFound
     case maxRetriesExceeded
@@ -13,6 +14,7 @@ enum FailureReason: Equatable, Sendable {
         switch self {
         case .localPortInUse(let p): return "Local port \(p) already in use"
         case .authenticationFailed: return "Authentication failed (oidc-login)"
+        case .gcloudAuthenticationRequired: return "Google Cloud login required (gcloud auth login)"
         case .kubectlNotFound: return "kubectl binary not found"
         case .serviceNotFound: return "Service not found in cluster"
         case .maxRetriesExceeded: return "Max reconnection attempts exceeded"
