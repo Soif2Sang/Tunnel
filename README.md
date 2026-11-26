@@ -5,7 +5,7 @@ Tunnel is a native macOS menu bar app for managing SSH local forwards and
 manual commands with a searchable interface, saved tunnels, and one-click controls.
 
 <p align="center">
-  <img src="Docs/tunnel-v0.2.0-overview.png" alt="Tunnel 0.2.0 menu bar popover with Kubernetes and SSH tunnels" width="472">
+  <img src="Docs/tunnel-v0.2.0-overview-en.png" alt="Tunnel 0.2.0 menu bar popover with Kubernetes and SSH tunnels" width="472">
 </p>
 
 The screenshots use fictional tunnels and simulated connection states.
@@ -87,16 +87,16 @@ xcodebuild -project Tunnel.xcodeproj -scheme Tunnel -destination 'platform=macOS
 3. Start or stop forwards from the popover.
 4. Enable auto-start for forwards that should come back when the app launches.
 5. After editing `forwards.json` by hand, right-click the popover heading and
-   choose **Recharger les tunnels**. Open **Réglages** with the gear next to **+**.
+   choose **Reload tunnels**. Open **Settings** with the gear next to **+**.
 
 ### Local port conflicts
 
-Click a tunnel marked **Port occupé** to see which process owns the port, if
-Tunnel can identify it. **Libérer et réessayer** stops that process before
+Click a tunnel marked **Port in use** to see which process owns the port, if
+Tunnel can identify it. **Free port and retry** stops that process before
 retrying, so use it only if you recognize the process and no longer need it.
 
 <p align="center">
-  <img src="Docs/tunnel-v0.2.0-port-conflict.png" alt="Expanded Tunnel row showing a local port conflict" width="472">
+  <img src="Docs/tunnel-v0.2.0-port-conflict-en.png" alt="Expanded Tunnel row showing a local port conflict" width="472">
 </p>
 
 ### SSH example: a service on your VPS
@@ -160,7 +160,7 @@ Saved forwards live at:
 The file is JSON, version-stamped, and written atomically.
 
 It is read once at launch; there is no file watcher. After editing it by hand,
-right-click the popover heading and choose **Recharger les tunnels**:
+right-click the popover heading and choose **Reload tunnels**:
 
 - forwards removed from the file are stopped;
 - new forwards appear idle (`autoStart` only applies at launch);
