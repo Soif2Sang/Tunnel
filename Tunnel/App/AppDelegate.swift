@@ -91,7 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func applySummary(_ summary: AppState.StatusSummary) {
         guard let button = statusItem?.button else { return }
-        let description = "Tunnel — Actifs : \(summary.runningCount), en cours : \(summary.connectingCount), échecs : \(summary.failedCount)"
+        let description = "Tunnel — Active: \(summary.runningCount), connecting: \(summary.connectingCount), failed: \(summary.failedCount)"
         button.toolTip = description
         button.setAccessibilityLabel(description)
         let tint: NSColor?

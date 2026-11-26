@@ -203,10 +203,10 @@ private struct ListScreen: View {
             }
             Spacer(minLength: 8)
             HStack(spacing: 3) {
-                ListActionButton(icon: "plus", title: "Ajouter un tunnel", size: 17) {
+                ListActionButton(icon: "plus", title: "Add tunnel", size: 17) {
                     screen = .addType
                 }
-                ListActionButton(icon: "gearshape", title: "Réglages") {
+                ListActionButton(icon: "gearshape", title: "Settings") {
                     screen = .settings
                 }
             }
@@ -215,10 +215,10 @@ private struct ListScreen: View {
         .padding(.top, 13)
         .padding(.bottom, 6)
         .contextMenu {
-            Button("Réglages…", systemImage: "gearshape") {
+            Button("Settings…", systemImage: "gearshape") {
                 screen = .settings
             }
-            Button("Recharger les tunnels", systemImage: "arrow.clockwise") {
+            Button("Reload tunnels", systemImage: "arrow.clockwise") {
                 Task { await app.reloadFromDisk() }
             }
             .disabled(app.isReloadingConfig)
@@ -246,21 +246,21 @@ private struct ListScreen: View {
         let idle = app.forwards.filter { (app.states[$0.id] ?? .idle) == .idle }.count
         return HStack(spacing: 10) {
             if s.runningCount > 0 {
-                statusDot(count: s.runningCount, label: "\(s.runningCount) \(s.runningCount == 1 ? "actif" : "actifs")", tint: .green)
+                statusDot(count: s.runningCount, label: "\(s.runningCount) active", tint: .green)
             }
             if s.connectingCount > 0 || s.failedCount > 0 {
                 let warnings = [
-                    s.connectingCount > 0 ? "\(s.connectingCount) en cours" : nil,
-                    s.failedCount > 0 ? "\(s.failedCount) \(s.failedCount == 1 ? "échec" : "échecs")" : nil,
+                    s.connectingCount > 0 ? "\(s.connectingCount) connecting" : nil,
+                    s.failedCount > 0 ? "\(s.failedCount) failed" : nil,
                 ].compactMap { $0 }
                 statusDot(count: s.connectingCount + s.failedCount, label: warnings.joined(separator: " · "), tint: .orange)
             }
             if idle > 0 {
-                statusDot(count: idle, label: "\(idle) \(idle == 1 ? "arrêté" : "arrêtés")", tint: .gray)
+                statusDot(count: idle, label: "\(idle) stopped", tint: .gray)
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("État des tunnels")
+        .accessibilityLabel("Tunnel status")
     }
 
     private func statusDot(count: Int, label: String, tint: Color) -> some View {
@@ -334,7 +334,7 @@ private struct ListScreen: View {
                 NSApp.terminate(nil)
             } label: {
                 HStack {
-                    Text("Quitter Tunnel")
+                    Text("Quit Tunnel")
                     Spacer()
                     Text("⌘Q")
                         .foregroundStyle(.secondary)
@@ -471,8 +471,8 @@ private struct EmptyStateView: View {
     var body: some View {
         VStack(spacing: 6) {
             HomeIcon().foregroundStyle(.secondary).padding(.bottom, 4)
-            Text("Aucun tunnel").font(.headline)
-            Text("Ajoutez un tunnel SSH ou Kubernetes avec le bouton +.")
+            Text("No tunnels yet").font(.headline)
+            Text("Click + to add an SSH or Kubernetes tunnel.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
@@ -514,7 +514,7 @@ private struct ForwardRow: View {
                 .buttonStyle(.plain)
                 .help("\(forward.displayName) · \(forward.portMapping) · \(forward.qualifiedTarget)")
                 .accessibilityLabel("\(forward.displayName), port \(forward.localPort), \(statusAppearance.title)")
-                .accessibilityHint(isExpanded ? "Masquer les détails" : "Afficher les détails")
+                .accessibilityHint(isExpanded ? "Hide details" : "Show details")
                 actionButton
             }
             .padding(.horizontal, 3)
@@ -560,22 +560,22 @@ private struct ForwardRow: View {
         switch state {
         case .running:
             let green = Color(nsColor: .systemGreen)
-            return ("Actif", "checkmark.circle.fill", green, Color(nsColor: NSColor(name: nil) { appearance in
+            return ("Active", "checkmark.circle.fill", green, Color(nsColor: NSColor(name: nil) { appearance in
                 appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
                     ? .systemGreen : NSColor(srgbRed: 0.02, green: 0.38, blue: 0.10, alpha: 1)
             }))
-        case .connecting: return ("Connexion…", "ellipsis.circle.fill", .orange, .secondary)
-        case .reconnecting: return ("Reconnexion…", "arrow.clockwise.circle.fill", .orange, .secondary)
-        case .failed(.localPortInUse): return ("Port occupé", "exclamationmark.triangle.fill", .red, .red)
-        case .failed: return ("Échec", "exclamationmark.triangle.fill", .red, .red)
-        case .idle: return ("Arrêté", "circle.fill", .secondary, .secondary)
+        case .connecting: return ("Connecting…", "ellipsis.circle.fill", .orange, .secondary)
+        case .reconnecting: return ("Reconnecting…", "arrow.clockwise.circle.fill", .orange, .secondary)
+        case .failed(.localPortInUse): return ("Port in use", "exclamationmark.triangle.fill", .red, .red)
+        case .failed: return ("Failed", "exclamationmark.triangle.fill", .red, .red)
+        case .idle: return ("Stopped", "circle.fill", .secondary, .secondary)
         }
     }
 
     private var actionButton: some View {
         let icon = state.isActive ? "stop.fill" : state.isFailed ? "arrow.clockwise" : "play.fill"
-        let action = state.isActive ? "Arrêter" : state.isFailed ? "Réessayer" : "Démarrer"
-        return ListActionButton(icon: icon, title: "\(action) : \(forward.displayName)") {
+        let action = state.isActive ? "Stop" : state.isFailed ? "Retry" : "Start"
+        return ListActionButton(icon: icon, title: "\(action) \(forward.displayName)") {
             Task {
                 if state.isActive { await app.stop(id: forward.id) }
                 else { await app.start(forward: forward) }
@@ -610,15 +610,15 @@ private struct ExpandedDetail: View {
                     get: { forward.autoStart },
                     set: { v in Task { await app.setAutoStart(id: forward.id, v) } }
                 )) {
-                    Text("Démarrer à l’ouverture")
+                    Text("Auto-start at launch")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
                 .toggleStyle(.checkbox)
                 .controlSize(.small)
                 Spacer()
-                ListActionButton(icon: "pencil", title: "Modifier le tunnel", size: 12, action: onEdit)
-                ListActionButton(icon: "trash", title: "Supprimer le tunnel", size: 12) {
+                ListActionButton(icon: "pencil", title: "Edit tunnel", size: 12, action: onEdit)
+                ListActionButton(icon: "trash", title: "Delete tunnel", size: 12) {
                     Task { await app.delete(id: forward.id) }
                 }
             }
@@ -632,14 +632,14 @@ private struct ExpandedDetail: View {
                                 .font(.system(size: 8, weight: .semibold))
                                 .frame(width: 10)
                                 .accessibilityHidden(true)
-                            Text("Journal de connexion")
+                            Text("Connection logs")
                             Spacer(minLength: 0)
                         }
                         .frame(minHeight: 24)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityValue(showsLogs ? "Déplié" : "Replié")
+                    .accessibilityValue(showsLogs ? "Expanded" : "Collapsed")
 
                     if showsLogs {
                         logsView(lines)
@@ -711,9 +711,9 @@ private struct ExpandedDetail: View {
         HStack(spacing: 8) {
             Group {
                 if let holder = portHolder {
-                    Text("\(holder.command ?? "Processus inconnu") · PID \(String(holder.pid))")
+                    Text("\(holder.command ?? "Unknown process") · PID \(String(holder.pid))")
                 } else {
-                    Text("Processus non identifié")
+                    Text("Process not identified")
                 }
             }
             .font(.caption)
@@ -730,19 +730,19 @@ private struct ExpandedDetail: View {
                     isFreeing = false
                 }
             } label: {
-                Text(isFreeing ? "Libération…" : "Libérer et réessayer")
+                Text(isFreeing ? "Freeing port…" : "Free port and retry")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Color.accentColor)
             }
             .buttonStyle(.plain)
             .disabled(isFreeing)
-            .help("Arrête le processus qui utilise le port \(port), puis relance le tunnel")
+            .help("Stops the process using port \(port), then retries the tunnel")
         }
         .padding(.vertical, 3)
         .contextMenu {
-            Button("Vérifier le port") { Task { await loadPortHolder() } }
+            Button("Check port") { Task { await loadPortHolder() } }
                 .disabled(isFreeing)
-            Button("Ignorer l’erreur") { Task { await app.acknowledgeFailure(id: forward.id) } }
+            Button("Dismiss error") { Task { await app.acknowledgeFailure(id: forward.id) } }
                 .disabled(isFreeing)
         }
         .task(id: port) {
@@ -1496,7 +1496,7 @@ private struct SettingsScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScreenHeader(title: "Réglages") {
+            ScreenHeader(title: "Settings") {
                 BackButton { screen = .list }
             } trailing: {
                 EmptyView()
